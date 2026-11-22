@@ -1,0 +1,9 @@
+# Правила проекта GraphNotes (Expo SDK 58, React 19, React Native)
+
+- Пиши простой, читаемый TypeScript-код без лишних абстракций.
+- **React 19 + RN refs:** для `useRef` на компонентах React Native (`TextInput`, `View`, `ScrollView`) НИКОГДА не используй `useRef<TextInput>(null)`. Всегда используй `ComponentRef<typeof TextInput>` из `'react'`.
+- **SafeArea:** `SafeAreaView` импортируй только из `'react-native-safe-area-context'`, а не из `'react-native'`.
+- **Навигация:** используй `expo-router` (`router.push`, `router.back`).
+- **Анимации и жесты:** проект использует `react-native-reanimated` 4 (`react-native-worklets`) и `react-native-gesture-handler` v2 (`Gesture.Tap()`, `Gesture.Pan()`).
+- **Графика:** граф рисуется через `@shopify/react-native-skia` (`Canvas`, `Circle`, `Line`, `Text`).
+- **Если возникает ошибка TypeScript:** не придумывай костыли с callback-рефами и `as any` — проверь реальные типы компонента.

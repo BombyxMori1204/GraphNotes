@@ -16,13 +16,13 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   android: {
     adaptiveIcon: {
-      foregroundImage: "./assets/adaptive-icon.png",
+      // foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#ffffff"
     },
     package: "com.localvault.app"
   },
   web: {
-    favicon: "./assets/favicon.png"
+    // favicon: "./assets/favicon.png"
   },
   plugins: [
     "expo-router",
