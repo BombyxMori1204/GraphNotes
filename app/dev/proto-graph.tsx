@@ -709,7 +709,7 @@ export default function GraphPrototypeScreen() {
       <KeyboardAvoidingView
         style={styles.flex}
         behavior="padding"
-        keyboardVerticalOffset={100}
+        keyboardVerticalOffset={110}
       >
         {/* Верхняя панель: кнопка Назад + инфо о выбранном узле */}
         <View style={styles.topBar}>
