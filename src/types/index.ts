@@ -17,6 +17,7 @@ export interface Item {
   sourceLabel: string;
   copyStatus: OfflineCopyStatus;
   topicIds: string[];
+  isRead: boolean;
   createdAt: string;
 }
 

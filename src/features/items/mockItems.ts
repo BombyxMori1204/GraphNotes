@@ -9,6 +9,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'Быстрая заметка',
     copyStatus: 'none',
     topicIds: [],
+    isRead: false,
     createdAt: '2026-03-18T09:30:00.000Z',
   },
   {
@@ -19,6 +20,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'habr.com',
     copyStatus: 'full',
     topicIds: ['diploma', 'articles', 'ideas'],
+    isRead: true,
     createdAt: '2026-03-17T14:10:00.000Z',
   },
   {
@@ -29,6 +31,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'semester_results.xlsx',
     copyStatus: 'none',
     topicIds: ['diploma', 'sqlite'],
+    isRead: false,
     createdAt: '2026-03-16T08:45:00.000Z',
   },
   {
@@ -39,6 +42,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'research_outline.docx',
     copyStatus: 'none',
     topicIds: ['diploma'],
+    isRead: false,
     createdAt: '2026-03-15T11:20:00.000Z',
   },
   {
@@ -49,6 +53,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'docs.expo.dev',
     copyStatus: 'text_only',
     topicIds: ['rn', 'articles'],
+    isRead: true,
     createdAt: '2026-03-14T16:05:00.000Z',
   },
   {
@@ -59,6 +64,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'Конспект лекции',
     copyStatus: 'none',
     topicIds: ['ux', 'design'],
+    isRead: true,
     createdAt: '2026-03-13T10:00:00.000Z',
   },
   {
@@ -69,6 +75,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'shopify.github.io',
     copyStatus: 'full',
     topicIds: ['skia', 'rn'],
+    isRead: true,
     createdAt: '2026-03-12T13:40:00.000Z',
   },
   {
@@ -79,6 +86,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'touch_targets.png',
     copyStatus: 'none',
     topicIds: ['ux', 'design', 'rn'],
+    isRead: true,
     createdAt: '2026-03-11T09:15:00.000Z',
   },
   {
@@ -89,6 +97,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'sqlite.org',
     copyStatus: 'text_only',
     topicIds: ['sqlite', 'rn'],
+    isRead: true,
     createdAt: '2026-03-10T18:25:00.000Z',
   },
   {
@@ -99,6 +108,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'local_models.xlsx',
     copyStatus: 'none',
     topicIds: ['ollama', 'python'],
+    isRead: false,
     createdAt: '2026-03-09T12:50:00.000Z',
   },
   {
@@ -109,6 +119,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'embedding_model.onnx',
     copyStatus: 'none',
     topicIds: ['python', 'ollama'],
+    isRead: false,
     createdAt: '2026-03-08T15:35:00.000Z',
   },
   {
@@ -119,6 +130,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'Рабочая заметка',
     copyStatus: 'none',
     topicIds: ['python', 'sqlite'],
+    isRead: false,
     createdAt: '2026-03-07T08:10:00.000Z',
   },
   {
@@ -129,6 +141,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'goodreads.com',
     copyStatus: 'none',
     topicIds: ['books', 'design', 'ux'],
+    isRead: true,
     createdAt: '2026-03-06T17:00:00.000Z',
   },
   {
@@ -139,6 +152,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'reading_list.pdf',
     copyStatus: 'none',
     topicIds: ['books', 'articles', 'diploma'],
+    isRead: true,
     createdAt: '2026-03-05T11:45:00.000Z',
   },
   {
@@ -149,6 +163,7 @@ export const MOCK_ITEMS: Item[] = [
     sourceLabel: 'Заметка',
     copyStatus: 'none',
     topicIds: ['ideas'],
+    isRead: false,
     createdAt: '2026-03-04T10:30:00.000Z',
   },
 ];

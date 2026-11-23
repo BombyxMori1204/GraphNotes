@@ -30,12 +30,29 @@ export function ItemCard({ item, onPress }: ItemCardProps) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${item.title}, ${ITEM_TYPE_LABELS[item.type]}`}
+      accessibilityLabel={`${item.title}, ${ITEM_TYPE_LABELS[item.type]}, ${item.isRead ? 'прочитано' : 'не прочитано'}`}
+      accessibilityState={{ checked: item.isRead }}
       onPress={() => onPress(item)}
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
       <View style={styles.typeRow}>
         <Text style={styles.typeLabel}>{ITEM_TYPE_LABELS[item.type]}</Text>
+        <View style={styles.readStatus}>
+          <View
+            style={[
+              styles.readDot,
+              item.isRead ? styles.readDotRead : styles.readDotUnread,
+            ]}
+          />
+          <Text
+            style={[
+              styles.readStatusText,
+              item.isRead ? styles.readStatusTextRead : styles.readStatusTextUnread,
+            ]}
+          >
+            {item.isRead ? 'Прочитано' : 'Не прочитано'}
+          </Text>
+        </View>
       </View>
       <Text style={styles.title} numberOfLines={2}>
         {item.title}
@@ -79,7 +96,36 @@ const styles = StyleSheet.create({
   },
   typeRow: {
     minHeight: 18,
-    justifyContent: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  readStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  readDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  readDotRead: {
+    backgroundColor: '#34D399',
+  },
+  readDotUnread: {
+    backgroundColor: '#FBBF24',
+  },
+  readStatusText: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  readStatusTextRead: {
+    color: '#6EE7B7',
+  },
+  readStatusTextUnread: {
+    color: '#FCD34D',
   },
   typeLabel: {
     color: '#7DD3FC',

@@ -17,6 +17,9 @@ import {
   Canvas,
   Circle,
   Line,
+  Path,
+  RoundedRect,
+  Skia,
   Text as SkiaText,
   matchFont,
   vec,
@@ -54,6 +57,13 @@ interface TopicNode extends SimulationNodeDatum {
 interface TopicLink extends SimulationLinkDatum<TopicNode> {
   source: string | TopicNode;
   target: string | TopicNode;
+}
+
+interface TopicMetrics {
+  totalCount: number;
+  readCount: number;
+  progress: number;
+  inboxCount: number;
 }
 
 const INITIAL_NODES: TopicNode[] = [
@@ -123,6 +133,37 @@ export default function GraphPrototypeScreen() {
   const [items, setItems] = useState<Item[]>(MOCK_ITEMS);
   const [nodes, setNodes] = useState<TopicNode[]>([]);
   const [links, setLinks] = useState<TopicLink[]>([]);
+
+  const topicMetrics = useMemo(() => {
+    const metrics = new Map<string, TopicMetrics>(
+      INITIAL_NODES.map((node) => [
+        node.id,
+        { totalCount: 0, readCount: 0, progress: 0, inboxCount: 0 },
+      ]),
+    );
+
+    for (const item of items) {
+      if (item.topicIds.length === 0) {
+        const inbox = metrics.get('inbox');
+        if (inbox) inbox.inboxCount += 1;
+        continue;
+      }
+
+      for (const topicId of item.topicIds) {
+        const topic = metrics.get(topicId);
+        if (!topic) continue;
+        topic.totalCount += 1;
+        if (item.isRead) topic.readCount += 1;
+      }
+    }
+
+    for (const metric of metrics.values()) {
+      metric.progress =
+        metric.totalCount > 0 ? metric.readCount / metric.totalCount : 0;
+    }
+
+    return metrics;
+  }, [items]);
 
   const simRef = useRef<Simulation<TopicNode, TopicLink> | null>(null);
   const nodesRef = useRef<TopicNode[]>([]);
@@ -427,7 +468,15 @@ export default function GraphPrototypeScreen() {
   const closeTopic = useCallback(() => setSelectedId(null), []);
   const dismissTopic = useCallback(() => setSheetTopicId(null), []);
   const handleItemPress = useCallback(
-    (item: Item) => console.info('Open item details later:', item.id),
+    (item: Item) => {
+      setItems((current) =>
+        current.map((currentItem) =>
+          currentItem.id === item.id
+            ? { ...currentItem, isRead: !currentItem.isRead }
+            : currentItem,
+        ),
+      );
+    },
     [],
   );
 
@@ -457,6 +506,7 @@ export default function GraphPrototypeScreen() {
       sourceLabel: 'Локальная заметка',
       copyStatus: 'none',
       topicIds: selectedTopicId === 'inbox' ? [] : [selectedTopicId],
+      isRead: false,
       createdAt: new Date().toISOString(),
     };
     setItems((current) => [newItem, ...current]);
@@ -551,14 +601,45 @@ export default function GraphPrototypeScreen() {
                       ? 0.25
                       : 1;
                 const nodeRadius = node.radius + (isSelected ? 6 : 0);
-                const topicItems = getItemsForTopic(items, node.id);
-                const itemCountText = String(topicItems.length);
+                const metrics = topicMetrics.get(node.id);
+                const itemCountText = String(
+                  node.id === 'inbox'
+                    ? metrics?.inboxCount ?? 0
+                    : metrics?.totalCount ?? 0,
+                );
+                const progress = metrics?.progress ?? 0;
+                const arcRadius = nodeRadius + (isSelected ? 7 : 3.5);
+                const progressPath =
+                  node.id !== 'inbox' && progress > 0 && progress < 1
+                    ? Skia.PathBuilder.Make()
+                        .addArc(
+                          {
+                            x: x - arcRadius,
+                            y: y - arcRadius,
+                            width: arcRadius * 2,
+                            height: arcRadius * 2,
+                          },
+                          -90,
+                          progress * 360,
+                        )
+                        .detach()
+                    : null;
                 const textWidth = font
                   ? font.measureText(node.label).width
                   : node.label.length * 6.5;
                 const itemCountWidth = countFont
                   ? countFont.measureText(itemCountText).width
                   : itemCountText.length * 5.5;
+                const inboxBadgeText =
+                  (metrics?.inboxCount ?? 0) > 99
+                    ? '99+'
+                    : String(metrics?.inboxCount ?? 0);
+                const inboxBadgeTextWidth = countFont
+                  ? countFont.measureText(inboxBadgeText).width
+                  : inboxBadgeText.length * 5.5;
+                const inboxBadgeWidth = Math.max(20, inboxBadgeTextWidth + 10);
+                const inboxBadgeX = x + nodeRadius * 0.7;
+                const inboxBadgeY = y - nodeRadius * 0.7;
 
                 return (
                   <React.Fragment key={node.id}>
@@ -569,6 +650,42 @@ export default function GraphPrototypeScreen() {
                       color={isSelected ? '#FFFFFF' : node.color}
                       opacity={opacity}
                     />
+                    {node.id !== 'inbox' && (
+                      <>
+                        <Circle
+                          cx={x}
+                          cy={y}
+                          r={arcRadius}
+                          color="rgba(148, 163, 184, 0.2)"
+                          style="stroke"
+                          strokeWidth={2.5}
+                          opacity={opacity * (isSelected ? 0.45 : 1)}
+                        />
+                        {progress >= 1 ? (
+                          <Circle
+                            cx={x}
+                            cy={y}
+                            r={arcRadius}
+                            color="#4ADE80"
+                            style="stroke"
+                            strokeWidth={2.5}
+                            strokeCap="round"
+                            opacity={opacity * (isSelected ? 0.5 : 1)}
+                          />
+                        ) : (
+                          progressPath && (
+                            <Path
+                              path={progressPath}
+                              color="#38BDF8"
+                              style="stroke"
+                              strokeWidth={2.5}
+                              strokeCap="round"
+                              opacity={opacity * (isSelected ? 0.5 : 1)}
+                            />
+                          )
+                        )}
+                      </>
+                    )}
                     {(isSelected || (isSearching && r > 0)) && (
                       <Circle
                         cx={x}
@@ -599,6 +716,64 @@ export default function GraphPrototypeScreen() {
                         opacity={opacity}
                       />
                     )}
+                    {node.id === 'inbox' &&
+                      (metrics?.inboxCount ?? 0) > 0 && (
+                        <>
+                          {inboxBadgeText.length > 1 ? (
+                            <>
+                              <RoundedRect
+                                x={inboxBadgeX - inboxBadgeWidth / 2}
+                                y={inboxBadgeY - 10}
+                                width={inboxBadgeWidth}
+                                height={20}
+                                r={10}
+                                color="#EF4444"
+                                opacity={opacity}
+                              />
+                              <RoundedRect
+                                x={inboxBadgeX - inboxBadgeWidth / 2}
+                                y={inboxBadgeY - 10}
+                                width={inboxBadgeWidth}
+                                height={20}
+                                r={10}
+                                color="#0F172A"
+                                style="stroke"
+                                strokeWidth={1.5}
+                                opacity={opacity}
+                              />
+                            </>
+                          ) : (
+                            <>
+                              <Circle
+                                cx={inboxBadgeX}
+                                cy={inboxBadgeY}
+                                r={10}
+                                color="#EF4444"
+                                opacity={opacity}
+                              />
+                              <Circle
+                                cx={inboxBadgeX}
+                                cy={inboxBadgeY}
+                                r={10}
+                                color="#0F172A"
+                                style="stroke"
+                                strokeWidth={1.5}
+                                opacity={opacity}
+                              />
+                            </>
+                          )}
+                          {countFont && (
+                            <SkiaText
+                              x={inboxBadgeX - inboxBadgeTextWidth / 2}
+                              y={inboxBadgeY + 3.5}
+                              text={inboxBadgeText}
+                              font={countFont}
+                              color="#FFFFFF"
+                              opacity={opacity}
+                            />
+                          )}
+                        </>
+                      )}
                   </React.Fragment>
                 );
               })}
