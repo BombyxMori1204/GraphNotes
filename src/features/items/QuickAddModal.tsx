@@ -1,0 +1,500 @@
+import { useEffect, useRef, useState } from 'react';
+import type { ComponentRef } from 'react';
+import {
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import type { Item } from '@/types';
+
+interface QuickAddTopic {
+  id: string;
+  label: string;
+}
+
+interface QuickAddModalProps {
+  visible: boolean;
+  topics: QuickAddTopic[];
+  onClose: () => void;
+  onSave: (item: Item) => void;
+}
+
+type QuickAddType = 'link' | 'text';
+
+function getDomain(url: string): string {
+  try {
+    const normalizedUrl = /^[a-z][a-z\d+.-]*:\/\//i.test(url)
+      ? url
+      : `https://${url}`;
+    return new URL(normalizedUrl).hostname.replace(/^www\./i, '') || url;
+  } catch {
+    return url;
+  }
+}
+
+export function QuickAddModal({
+  visible,
+  topics,
+  onClose,
+  onSave,
+}: QuickAddModalProps) {
+  const { height: screenHeight } = useWindowDimensions();
+  const [type, setType] = useState<QuickAddType>('link');
+  const [url, setUrl] = useState('');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [saveOfflineCopy, setSaveOfflineCopy] = useState(true);
+  const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
+  const [validationMessage, setValidationMessage] = useState('');
+  const urlInputRef = useRef<ComponentRef<typeof TextInput>>(null);
+  const backdropOpacity = useSharedValue(0);
+  const sheetOffset = useSharedValue(36);
+
+  useEffect(() => {
+    backdropOpacity.value = withTiming(visible ? 1 : 0, { duration: 180 });
+    sheetOffset.value = withTiming(visible ? 0 : 36, {
+      duration: visible ? 240 : 180,
+      easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+    });
+
+    if (visible) {
+      const focusTimeout = setTimeout(() => urlInputRef.current?.focus(), 250);
+      return () => clearTimeout(focusTimeout);
+    }
+
+    return undefined;
+  }, [backdropOpacity, sheetOffset, visible]);
+
+  const backdropStyle = useAnimatedStyle(() => ({
+    opacity: backdropOpacity.value,
+  }));
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: sheetOffset.value }],
+  }));
+
+  const resetForm = () => {
+    setType('link');
+    setUrl('');
+    setTitle('');
+    setDescription('');
+    setSaveOfflineCopy(true);
+    setSelectedTopicIds([]);
+    setValidationMessage('');
+  };
+
+  const close = () => {
+    resetForm();
+    onClose();
+  };
+
+  const save = () => {
+    const normalizedUrl = url.trim();
+    const normalizedDescription = description.trim();
+    const itemText = type === 'text' ? normalizedDescription : normalizedUrl;
+
+    if (!itemText) {
+      setValidationMessage(
+        type === 'link' ? 'Введите ссылку.' : 'Введите текст заметки.',
+      );
+      return;
+    }
+
+    const sourceLabel = type === 'link' ? getDomain(normalizedUrl) : 'Заметка';
+    const fallbackTitle =
+      type === 'link'
+        ? sourceLabel
+        : normalizedDescription.slice(0, 40);
+    const item: Item = {
+      id: `quick-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: title.trim() || fallbackTitle,
+      type,
+      description: normalizedDescription,
+      sourceLabel,
+      copyStatus:
+        type === 'link' && saveOfflineCopy ? 'full' : 'none',
+      topicIds: selectedTopicIds,
+      isRead: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    onSave(item);
+    close();
+  };
+
+  const toggleTopic = (topicId: string) => {
+    setSelectedTopicIds((current) =>
+      current.includes(topicId)
+        ? current.filter((id) => id !== topicId)
+        : [...current, topicId],
+    );
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={close}
+    >
+      <View style={styles.overlay}>
+        <Animated.View style={[styles.backdrop, backdropStyle]}>
+          <Pressable
+            accessibilityLabel="Закрыть окно быстрого добавления"
+            onPress={close}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardAvoiding}
+        >
+          <Animated.View
+            style={[
+              styles.sheet,
+              { maxHeight: screenHeight * 0.9 },
+              sheetStyle,
+            ]}
+          >
+            <View style={styles.handle} />
+            <Text style={styles.heading}>Быстрое добавление</Text>
+            <View style={styles.typeRow}>
+              {([
+                ['link', 'Ссылка'],
+                ['text', 'Текст'],
+              ] as const).map(([value, label]) => {
+                const isActive = type === value;
+                return (
+                  <Pressable
+                    key={value}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isActive }}
+                    onPress={() => {
+                      setType(value);
+                      setValidationMessage('');
+                    }}
+                    style={[styles.typeChip, isActive && styles.activeTypeChip]}
+                  >
+                    <Text
+                      style={[
+                        styles.typeChipText,
+                        isActive && styles.activeTypeChipText,
+                      ]}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <ScrollView
+              style={styles.form}
+              contentContainerStyle={styles.formContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {type === 'link' && (
+                <>
+                  <Text style={styles.label}>Ссылка</Text>
+                  <TextInput
+                    ref={urlInputRef}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoFocus
+                    keyboardType="url"
+                    onChangeText={(value) => {
+                      setUrl(value);
+                      setValidationMessage('');
+                    }}
+                    placeholder="https://example.com"
+                    placeholderTextColor="#64748B"
+                    returnKeyType="next"
+                    style={styles.input}
+                    value={url}
+                  />
+                </>
+              )}
+
+              <Text style={styles.label}>Название · необязательно</Text>
+              <TextInput
+                autoCorrect={false}
+                onChangeText={setTitle}
+                placeholder="Название"
+                placeholderTextColor="#64748B"
+                returnKeyType="next"
+                style={styles.input}
+                value={title}
+              />
+
+              <Text style={styles.label}>
+                {type === 'text' ? 'Текст заметки' : 'Описание / заметка'}
+              </Text>
+              <TextInput
+                autoCorrect
+                multiline
+                onChangeText={(value) => {
+                  setDescription(value);
+                  setValidationMessage('');
+                }}
+                placeholder={
+                  type === 'text'
+                    ? 'Запишите мысль…'
+                    : 'Короткая заметка к ссылке'
+                }
+                placeholderTextColor="#64748B"
+                style={[styles.input, styles.descriptionInput]}
+                textAlignVertical="top"
+                value={description}
+              />
+
+              {type === 'link' && (
+                <View style={styles.offlineRow}>
+                  <View style={styles.offlineCopy}>
+                    <Text style={styles.label}>Офлайн-копия</Text>
+                    <Text style={styles.helper}>
+                      Сохранить материал для чтения без сети
+                    </Text>
+                  </View>
+                  <Switch
+                    onValueChange={setSaveOfflineCopy}
+                    trackColor={{ false: '#475569', true: '#F97316' }}
+                    value={saveOfflineCopy}
+                  />
+                </View>
+              )}
+
+              <Text style={styles.label}>Темы</Text>
+              <ScrollView
+                horizontal
+                contentContainerStyle={styles.topicList}
+                showsHorizontalScrollIndicator={false}
+              >
+                {topics.map((topic) => {
+                  const isSelected = selectedTopicIds.includes(topic.id);
+                  return (
+                    <Pressable
+                      key={topic.id}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      onPress={() => toggleTopic(topic.id)}
+                      style={[
+                        styles.topicChip,
+                        isSelected && styles.selectedTopicChip,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.topicChipText,
+                          isSelected && styles.selectedTopicChipText,
+                        ]}
+                      >
+                        {topic.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+              {selectedTopicIds.length === 0 && (
+                <Text style={styles.helper}>Попадёт во «Входящие»</Text>
+              )}
+              {validationMessage.length > 0 && (
+                <Text accessibilityRole="alert" style={styles.error}>
+                  {validationMessage}
+                </Text>
+              )}
+            </ScrollView>
+
+            <View style={styles.footer}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={save}
+                style={styles.saveButton}
+              >
+                <Text style={styles.saveButtonText}>Сохранить</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'transparent',
+  },
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(2, 6, 23, 0.7)',
+  },
+  keyboardAvoiding: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    overflow: 'hidden',
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    borderColor: '#334155',
+    backgroundColor: '#1E293B',
+    paddingTop: 10,
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 36,
+    height: 4,
+    marginBottom: 8,
+    borderRadius: 2,
+    backgroundColor: '#64748B',
+  },
+  heading: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    color: '#FFFFFF',
+    fontSize: 19,
+    fontWeight: '700',
+  },
+  typeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  typeChip: {
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 18,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  activeTypeChip: {
+    borderColor: '#F97316',
+    backgroundColor: '#F97316',
+  },
+  typeChipText: {
+    color: '#CBD5E1',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  activeTypeChipText: {
+    color: '#FFFFFF',
+  },
+  form: {
+    flexShrink: 1,
+  },
+  formContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  label: {
+    marginTop: 10,
+    marginBottom: 6,
+    color: '#CBD5E1',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  input: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#0F172A',
+    color: '#FFFFFF',
+    fontSize: 15,
+  },
+  descriptionInput: {
+    minHeight: 66,
+    maxHeight: 112,
+    paddingTop: 12,
+    textAlignVertical: 'top',
+  },
+  offlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  offlineCopy: {
+    flex: 1,
+  },
+  helper: {
+    color: '#94A3B8',
+    fontSize: 12,
+  },
+  topicList: {
+    gap: 8,
+    paddingBottom: 2,
+  },
+  topicChip: {
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#475569',
+    backgroundColor: '#0F172A',
+  },
+  selectedTopicChip: {
+    borderColor: '#F97316',
+    backgroundColor: '#F97316',
+  },
+  topicChipText: {
+    color: '#CBD5E1',
+    fontSize: 13,
+  },
+  selectedTopicChipText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+  },
+  error: {
+    marginTop: 8,
+    color: '#FCA5A5',
+    fontSize: 13,
+  },
+  footer: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: '#334155',
+  },
+  saveButton: {
+    minHeight: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    backgroundColor: '#F97316',
+  },
+  saveButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+});

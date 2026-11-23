@@ -1,10 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -43,7 +41,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import type { Item } from '@/types';
 import { getItemsForTopic, MOCK_ITEMS } from '@/features/items/mockItems';
+import { QuickAddModal } from '@/features/items/QuickAddModal';
 import { TopicBottomSheet } from '@/features/items/TopicBottomSheet';
+import { getTopicNodeDiameter, mmToDp } from '@/features/graph/metrics';
+
+const SEARCH_PANEL_HEIGHT = mmToDp(12);
+const SEARCH_PANEL_HIDE_OFFSET = mmToDp(3);
 
 interface TopicNode extends SimulationNodeDatum {
   id: string;
@@ -127,12 +130,10 @@ export default function GraphPrototypeScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheetTopicId, setSheetTopicId] = useState<string | null>(null);
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
-  const [newItemTitle, setNewItemTitle] = useState('');
-  const [newItemDescription, setNewItemDescription] = useState('');
-  const [selectedTopicId, setSelectedTopicId] = useState('inbox');
   const [items, setItems] = useState<Item[]>(MOCK_ITEMS);
   const [nodes, setNodes] = useState<TopicNode[]>([]);
   const [links, setLinks] = useState<TopicLink[]>([]);
+  const [toastMessage, setToastMessage] = useState('');
 
   const topicMetrics = useMemo(() => {
     const metrics = new Map<string, TopicMetrics>(
@@ -166,8 +167,19 @@ export default function GraphPrototypeScreen() {
   }, [items]);
 
   const simRef = useRef<Simulation<TopicNode, TopicLink> | null>(null);
+  const topicMetricsRef = useRef(topicMetrics);
   const nodesRef = useRef<TopicNode[]>([]);
   const draggedNodeRef = useRef<TopicNode | null>(null);
+
+  useEffect(() => {
+    topicMetricsRef.current = topicMetrics;
+  }, [topicMetrics]);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timeout = setTimeout(() => setToastMessage(''), 1800);
+    return () => clearTimeout(timeout);
+  }, [toastMessage]);
 
   const font = useMemo(
     () =>
@@ -193,11 +205,17 @@ export default function GraphPrototypeScreen() {
   const searchBarAnimatedStyle = useAnimatedStyle(
     () => ({
       opacity: withTiming(selectedId === null ? 1 : 0, { duration: 180 }),
+      height: withTiming(selectedId === null ? SEARCH_PANEL_HEIGHT : 0, {
+        duration: 180,
+      }),
       transform: [
         {
-          translateY: withTiming(selectedId === null ? 0 : 24, {
-            duration: 180,
-          }),
+          translateY: withTiming(
+            selectedId === null ? 0 : SEARCH_PANEL_HIDE_OFFSET,
+            {
+              duration: 180,
+            },
+          ),
         },
       ],
     }),
@@ -235,11 +253,19 @@ export default function GraphPrototypeScreen() {
   // Инициализация симуляции
   useEffect(() => {
     const { width, height } = canvasSize;
-    const simNodes: TopicNode[] = INITIAL_NODES.map((n, i) => ({
-      ...n,
-      x: width / 2 + Math.cos(i) * 40,
-      y: height / 2 + Math.sin(i) * 40,
-    }));
+    const simNodes: TopicNode[] = INITIAL_NODES.map((n, i) => {
+      const metrics = topicMetricsRef.current.get(n.id);
+      const itemCount =
+        n.id === 'inbox'
+          ? metrics?.inboxCount ?? 0
+          : metrics?.totalCount ?? 0;
+      return {
+        ...n,
+        radius: getTopicNodeDiameter(itemCount) / 2,
+        x: width / 2 + Math.cos(i) * 40,
+        y: height / 2 + Math.sin(i) * 40,
+      };
+    });
     const simLinks: TopicLink[] = INITIAL_LINKS.map((l) => ({ ...l }));
 
     nodesRef.current = simNodes;
@@ -283,6 +309,26 @@ export default function GraphPrototypeScreen() {
       simulation.stop();
     };
   }, [canvasSize]);
+
+  useEffect(() => {
+    const simulation = simRef.current;
+    if (!simulation) return;
+
+    for (const node of simulation.nodes()) {
+      const metrics = topicMetrics.get(node.id);
+      const itemCount =
+        node.id === 'inbox'
+          ? metrics?.inboxCount ?? 0
+          : metrics?.totalCount ?? 0;
+      node.radius = getTopicNodeDiameter(itemCount) / 2;
+    }
+
+    simulation.force(
+      'collide',
+      forceCollide<TopicNode>().radius((node) => node.radius + 8),
+    );
+    simulation.alpha(0.25).restart();
+  }, [topicMetrics]);
 
   // Реакция физики на поисковый запрос и выбор темы
   useEffect(() => {
@@ -480,39 +526,24 @@ export default function GraphPrototypeScreen() {
     [],
   );
 
-  const closeAddModal = () => {
-    setIsAddModalVisible(false);
-    setNewItemTitle('');
-    setNewItemDescription('');
-    setSelectedTopicId('inbox');
-  };
+  const openAddModal = useCallback(() => setIsAddModalVisible(true), []);
+  const closeAddModal = useCallback(() => setIsAddModalVisible(false), []);
+  const handleQuickAddSave = useCallback((item: Item) => {
+    setItems((current) => [item, ...current]);
+    if (item.topicIds.length === 0) {
+      setToastMessage('Сохранено во «Входящие»');
+      return;
+    }
 
-  const openAddModal = () => {
-    setNewItemTitle('');
-    setNewItemDescription('');
-    setSelectedTopicId('inbox');
-    setIsAddModalVisible(true);
-  };
-
-  const saveSavedItem = () => {
-    const title = newItemTitle.trim();
-    if (!title) return;
-
-    const newItem: Item = {
-      id: String(Date.now()),
-      title,
-      type: 'text',
-      description: newItemDescription.trim() || 'Текстовая заметка без описания.',
-      sourceLabel: 'Локальная заметка',
-      copyStatus: 'none',
-      topicIds: selectedTopicId === 'inbox' ? [] : [selectedTopicId],
-      isRead: false,
-      createdAt: new Date().toISOString(),
-    };
-    setItems((current) => [newItem, ...current]);
-    closeAddModal();
-    simRef.current?.alpha(0.35).restart();
-  };
+    const topicLabels = item.topicIds
+      .map((topicId) => INITIAL_NODES.find((node) => node.id === topicId)?.label)
+      .filter((label): label is string => label !== undefined);
+    setToastMessage(
+      topicLabels.length === 1
+        ? `Добавлено в тему «${topicLabels[0]}»`
+        : `Добавлено в ${topicLabels.length} темы`,
+    );
+  }, []);
 
   const isSearching = query.trim().length > 0;
 
@@ -808,7 +839,7 @@ export default function GraphPrototypeScreen() {
             </View>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Добавить заметку"
+              accessibilityLabel="Быстро добавить материал"
               onPress={openAddModal}
               style={styles.addButton}
             >
@@ -828,100 +859,20 @@ export default function GraphPrototypeScreen() {
         />
       )}
 
-      {/* Модалка добавления новой заметки */}
-      <Modal
+      <QuickAddModal
         visible={isAddModalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={closeAddModal}
-      >
-        <View style={styles.addModalOverlay}>
-          <Pressable
-            accessibilityLabel="Закрыть окно добавления"
-            onPress={closeAddModal}
-            style={StyleSheet.absoluteFill}
-          />
-          <KeyboardAvoidingView
-            behavior="padding"
-            style={styles.addModalKeyboardAvoiding}
-          >
-            <View style={styles.addModalCard}>
-              <Text style={styles.addModalTitle}>Новая заметка</Text>
-              <Text style={styles.formLabel}>Название</Text>
-              <TextInput
-                autoCorrect={false}
-                onChangeText={setNewItemTitle}
-                placeholder="Название"
-                placeholderTextColor="#94A3B8"
-                style={styles.titleInput}
-                value={newItemTitle}
-              />
-              <Text style={styles.formLabel}>Описание</Text>
-              <TextInput
-                autoCorrect={false}
-                multiline
-                numberOfLines={4}
-                onChangeText={setNewItemDescription}
-                placeholder="Текст, ссылка или пометка о файле"
-                placeholderTextColor="#94A3B8"
-                style={styles.addModalInput}
-                value={newItemDescription}
-              />
-              <Text style={styles.formLabel}>Тема</Text>
-              <ScrollView
-                horizontal
-                contentContainerStyle={styles.topicChipList}
-                showsHorizontalScrollIndicator={false}
-              >
-                {INITIAL_NODES.map((topic) => {
-                  const isSelectedTopic = selectedTopicId === topic.id;
-                  return (
-                    <Pressable
-                      key={topic.id}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: isSelectedTopic }}
-                      onPress={() => setSelectedTopicId(topic.id)}
-                      style={[
-                        styles.topicChip,
-                        isSelectedTopic && styles.topicChipSelected,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.topicChipText,
-                          isSelectedTopic && styles.topicChipTextSelected,
-                        ]}
-                      >
-                        {topic.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-              <View style={styles.addModalActions}>
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={!newItemTitle.trim()}
-                  onPress={saveSavedItem}
-                  style={[
-                    styles.saveItemButton,
-                    !newItemTitle.trim() && styles.saveItemButtonDisabled,
-                  ]}
-                >
-                  <Text style={styles.saveItemButtonText}>Сохранить</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={closeAddModal}
-                  style={styles.cancelAddButton}
-                >
-                  <Text style={styles.cancelAddButtonText}>Отмена</Text>
-                </Pressable>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
+        topics={INITIAL_NODES.filter((node) => node.id !== 'inbox').map(
+          (node) => ({ id: node.id, label: node.label }),
+        )}
+        onClose={closeAddModal}
+        onSave={handleQuickAddSave}
+      />
+
+      {toastMessage.length > 0 && (
+        <View pointerEvents="none" style={styles.toast}>
+          <Text style={styles.toastText}>{toastMessage}</Text>
         </View>
-      </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -963,10 +914,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   searchBar: {
+    height: mmToDp(12),
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 12,
+    overflow: 'hidden',
     backgroundColor: 'transparent',
     gap: 12,
   },
@@ -1006,136 +958,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   addButton: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
+    width: mmToDp(10),
+    height: mmToDp(10),
+    borderRadius: mmToDp(5),
+    backgroundColor: '#F97316',
     alignItems: 'center',
     justifyContent: 'center',
   },
   addButtonText: {
-    color: '#0F172A',
+    color: '#FFFFFF',
     fontSize: 28,
     fontWeight: '500',
     lineHeight: 32,
   },
-  addModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-  },
-  addModalKeyboardAvoiding: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  addModalCard: {
-    backgroundColor: '#1E293B',
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: '#334155',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 24,
-  },
-  addModalTitle: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  formLabel: {
-    color: '#CBD5E1',
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 12,
-    marginBottom: 6,
-  },
-  titleInput: {
-    height: 48,
-    backgroundColor: '#0F172A',
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 12,
-    color: '#FFFFFF',
-    fontSize: 15,
-    paddingHorizontal: 14,
-  },
-  addModalInput: {
-    minHeight: 100,
-    maxHeight: 140,
-    backgroundColor: '#0F172A',
-    borderWidth: 1,
-    borderColor: '#334155',
-    borderRadius: 12,
-    color: '#FFFFFF',
-    fontSize: 15,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    textAlignVertical: 'top',
-  },
-  topicChipList: {
-    gap: 8,
-    paddingBottom: 2,
-  },
-  topicChip: {
-    minHeight: 36,
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: '#475569',
-    backgroundColor: '#0F172A',
-  },
-  topicChipSelected: {
-    borderColor: '#F97316',
-    backgroundColor: '#F97316',
-  },
-  topicChipText: {
-    color: '#CBD5E1',
-    fontSize: 13,
-  },
-  topicChipTextSelected: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  addModalActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
-  saveItemButton: {
-    flex: 1,
-    minHeight: 46,
-    borderRadius: 12,
-    backgroundColor: '#F97316',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 10,
-  },
-  saveItemButtonDisabled: {
-    opacity: 0.5,
-  },
-  saveItemButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  cancelAddButton: {
-    minWidth: 84,
-    minHeight: 46,
-    borderRadius: 12,
+  toast: {
+    position: 'absolute',
+    zIndex: 3,
+    bottom: mmToDp(12) + 10,
+    alignSelf: 'center',
+    maxWidth: '90%',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
     backgroundColor: '#334155',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
   },
-  cancelAddButtonText: {
-    color: '#E2E8F0',
-    fontSize: 14,
+  toastText: {
+    color: '#FFFFFF',
+    fontSize: 13,
     fontWeight: '600',
+    textAlign: 'center',
   },
 });
