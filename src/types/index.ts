@@ -11,15 +11,13 @@ export interface Topic {
 
 export interface Item {
   id: string;
-  type: ItemType;
-  topicId: string | null;
   title: string;
-  description: string | null;
-  url: string | null;
-  filePath: string | null;
-  offlineStatus: OfflineCopyStatus;
-  createdAt: number;
-  updatedAt: number;
+  type: ItemType;
+  description: string;
+  sourceLabel: string;
+  copyStatus: OfflineCopyStatus;
+  topicIds: string[];
+  createdAt: string;
 }
 
 export interface VectorSearchResult {

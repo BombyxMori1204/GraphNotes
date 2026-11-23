@@ -1,6 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Animated,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -35,6 +34,13 @@ import {
   type SimulationNodeDatum,
 } from 'd3-force';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  useAnimatedStyle,
+  withTiming,
+} from 'react-native-reanimated';
+import type { Item } from '@/types';
+import { getItemsForTopic, MOCK_ITEMS } from '@/features/items/mockItems';
+import { TopicBottomSheet } from '@/features/items/TopicBottomSheet';
 
 interface TopicNode extends SimulationNodeDatum {
   id: string;
@@ -48,13 +54,6 @@ interface TopicNode extends SimulationNodeDatum {
 interface TopicLink extends SimulationLinkDatum<TopicNode> {
   source: string | TopicNode;
   target: string | TopicNode;
-}
-
-interface SavedItem {
-  id: string;
-  title: string;
-  description: string;
-  isOfflineSaved?: boolean;
 }
 
 const INITIAL_NODES: TopicNode[] = [
@@ -89,189 +88,6 @@ const INITIAL_LINKS: TopicLink[] = [
   { source: 'ideas', target: 'design' },
 ];
 
-const INITIAL_ITEMS_BY_TOPIC: Record<string, SavedItem[]> = {
-  inbox: [
-    {
-      id: 'inbox-1',
-      title: 'Статья о графовых заметках',
-      description: 'Обзор подходов к визуальной организации знаний',
-      isOfflineSaved: true,
-    },
-    {
-      id: 'inbox-2',
-      title: 'Идея карты проектов',
-      description: 'Связывать заметки по темам и источникам',
-    },
-    {
-      id: 'inbox-3',
-      title: 'Расписание занятий',
-      description: 'Фото расписания на весенний семестр',
-      isOfflineSaved: true,
-    },
-    {
-      id: 'inbox-4',
-      title: 'Подборка по UX',
-      description: 'Ссылки на материалы о мобильной эргономике',
-    },
-  ],
-  diploma: [
-    {
-      id: 'diploma-1',
-      title: 'Успеваемость',
-      description: 'Таблица с оценками за весенний семестр',
-      isOfflineSaved: true,
-    },
-    {
-      id: 'diploma-2',
-      title: 'Лабораторная работа 1',
-      description: 'React Native: прототип графа тем',
-      isOfflineSaved: true,
-    },
-    {
-      id: 'diploma-3',
-      title: 'Источники',
-      description: 'Ссылки для ВКР и список литературы',
-    },
-    {
-      id: 'diploma-4',
-      title: 'Структура исследования',
-      description: 'Черновой план глав и разделов',
-    },
-  ],
-  rn: [
-    {
-      id: 'rn-1',
-      title: 'Лабораторная работа 1',
-      description: 'React Native: жесты и взаимодействие с графом',
-      isOfflineSaved: true,
-    },
-    {
-      id: 'rn-2',
-      title: 'Expo Router',
-      description: 'Документация по структуре маршрутов',
-    },
-    {
-      id: 'rn-3',
-      title: 'Заметки по Android',
-      description: 'Особенности клавиатуры и safe area',
-    },
-  ],
-  ux: [
-    {
-      id: 'ux-1',
-      title: 'Закон Фиттса',
-      description: 'Конспект о времени достижения цели касанием',
-    },
-    {
-      id: 'ux-2',
-      title: 'Размеры touch target',
-      description: 'Рекомендации по доступным зонам нажатия',
-      isOfflineSaved: true,
-    },
-  ],
-  skia: [
-    {
-      id: 'skia-1',
-      title: 'Текст на Canvas',
-      description: 'Пример выравнивания подписи узла',
-    },
-    {
-      id: 'skia-2',
-      title: 'Пути и дуги',
-      description: 'Справочник по построению фигур в Skia',
-      isOfflineSaved: true,
-    },
-  ],
-  ollama: [
-    {
-      id: 'ollama-1',
-      title: 'Сравнение локальных моделей',
-      description: 'Заметки о качестве ответов и размере моделей',
-    },
-    {
-      id: 'ollama-2',
-      title: 'Qwen',
-      description: 'Ссылка на карточку модели и параметры запуска',
-      isOfflineSaved: true,
-    },
-  ],
-  python: [
-    {
-      id: 'python-1',
-      title: 'Эмбеддинги заметок',
-      description: 'Черновик скрипта для векторизации текста',
-    },
-    {
-      id: 'python-2',
-      title: 'ONNX-модель',
-      description: 'Ссылка на модель для локального поиска',
-      isOfflineSaved: true,
-    },
-  ],
-  sqlite: [
-    {
-      id: 'sqlite-1',
-      title: 'Схема хранилища',
-      description: 'Таблицы заметок, тем и сохранённых ссылок',
-    },
-    {
-      id: 'sqlite-2',
-      title: 'Полнотекстовый поиск',
-      description: 'Заметка об индексах SQLite FTS',
-    },
-  ],
-  articles: [
-    {
-      id: 'articles-1',
-      title: 'Графы знаний',
-      description: 'Статья о связях между документами и понятиями',
-      isOfflineSaved: true,
-    },
-    {
-      id: 'articles-2',
-      title: 'Поиск по PDF',
-      description: 'Обзор локального индексирования документов',
-    },
-  ],
-  ideas: [
-    {
-      id: 'ideas-1',
-      title: 'Быстрый захват',
-      description: 'Добавление ссылки из системного меню «Поделиться»',
-    },
-    {
-      id: 'ideas-2',
-      title: 'Связи между заметками',
-      description: 'Показывать общие источники и ключевые слова',
-    },
-  ],
-  design: [
-    {
-      id: 'design-1',
-      title: 'Палитра тёмной темы',
-      description: 'Цвета фона, карточек и акцентных элементов',
-    },
-    {
-      id: 'design-2',
-      title: 'Карточка темы',
-      description: 'Эскиз компактного представления сохранённого материала',
-    },
-  ],
-  books: [
-    {
-      id: 'books-1',
-      title: 'Дизайн повседневных вещей',
-      description: 'Электронная книга и заметки о понятности интерфейса',
-      isOfflineSaved: true,
-    },
-    {
-      id: 'books-2',
-      title: 'Конспект по навигации',
-      description: 'Цитаты о структуре и поиске информации',
-    },
-  ],
-};
-
 function computeRelevance(node: TopicNode, query: string): number {
   const q = query.trim().toLowerCase();
   if (!q) return 0;
@@ -290,22 +106,8 @@ function computeRelevance(node: TopicNode, query: string): number {
   return 0;
 }
 
-function formatItemCount(count: number): string {
-  const remainder10 = count % 10;
-  const remainder100 = count % 100;
-  const unit =
-    remainder10 === 1 && remainder100 !== 11
-      ? 'элемент'
-      : remainder10 >= 2 && remainder10 <= 4 && (remainder100 < 12 || remainder100 > 14)
-        ? 'элемента'
-        : 'элементов';
-
-  return `${count} ${unit}`;
-}
-
 export default function GraphPrototypeScreen() {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const sheetHeight = screenHeight * 0.65;
 
   const [canvasSize, setCanvasSize] = useState({
     width: screenWidth,
@@ -313,21 +115,18 @@ export default function GraphPrototypeScreen() {
   });
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [renderedTopicId, setRenderedTopicId] = useState<string | null>(null);
+  const [sheetTopicId, setSheetTopicId] = useState<string | null>(null);
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [newItemTitle, setNewItemTitle] = useState('');
   const [newItemDescription, setNewItemDescription] = useState('');
   const [selectedTopicId, setSelectedTopicId] = useState('inbox');
-  const [itemsByTopic, setItemsByTopic] = useState<Record<string, SavedItem[]>>(
-    INITIAL_ITEMS_BY_TOPIC
-  );
+  const [items, setItems] = useState<Item[]>(MOCK_ITEMS);
   const [nodes, setNodes] = useState<TopicNode[]>([]);
   const [links, setLinks] = useState<TopicLink[]>([]);
 
   const simRef = useRef<Simulation<TopicNode, TopicLink> | null>(null);
   const nodesRef = useRef<TopicNode[]>([]);
   const draggedNodeRef = useRef<TopicNode | null>(null);
-  const sheetTranslateY = useRef(new Animated.Value(sheetHeight)).current;
 
   const font = useMemo(
     () =>
@@ -350,6 +149,19 @@ export default function GraphPrototypeScreen() {
   const anchorY = canvasSize.height * 0.75;
   const activeHeight =
     selectedId === null ? canvasSize.height : canvasSize.height * 0.35;
+  const searchBarAnimatedStyle = useAnimatedStyle(
+    () => ({
+      opacity: withTiming(selectedId === null ? 1 : 0, { duration: 180 }),
+      transform: [
+        {
+          translateY: withTiming(selectedId === null ? 0 : 24, {
+            duration: 180,
+          }),
+        },
+      ],
+    }),
+    [selectedId],
+  );
 
   const relevanceMap = useMemo(() => {
     const map: Record<string, number> = {};
@@ -378,29 +190,6 @@ export default function GraphPrototypeScreen() {
   useEffect(() => {
     selectedModeRef.current = { selectedId, neighborIds: selectedNeighborIds };
   }, [selectedId, selectedNeighborIds]);
-
-  // Плавное открытие и закрытие нижней шторки
-  useEffect(() => {
-    if (selectedId !== null) {
-      setRenderedTopicId(selectedId);
-      Animated.spring(sheetTranslateY, {
-        toValue: 0,
-        useNativeDriver: true,
-        damping: 22,
-        stiffness: 220,
-      }).start();
-    } else if (renderedTopicId !== null) {
-      Animated.timing(sheetTranslateY, {
-        toValue: sheetHeight,
-        duration: 220,
-        useNativeDriver: true,
-      }).start(({ finished }) => {
-        if (finished) {
-          setRenderedTopicId(null);
-        }
-      });
-    }
-  }, [selectedId, renderedTopicId, sheetHeight, sheetTranslateY]);
 
   // Инициализация симуляции
   useEffect(() => {
@@ -452,7 +241,7 @@ export default function GraphPrototypeScreen() {
     return () => {
       simulation.stop();
     };
-  }, [canvasSize.width, canvasSize.height]);
+  }, [canvasSize]);
 
   // Реакция физики на поисковый запрос и выбор темы
   useEffect(() => {
@@ -466,7 +255,7 @@ export default function GraphPrototypeScreen() {
     if (selectedId !== null) {
       const focusedX = canvasSize.width * 0.28;
       const neighborsX = canvasSize.width * 0.68;
-      const focusedY = activeHeight * 0.55;
+      const focusedY = activeHeight * 0.35;
       const hiddenY =
         activeHeight + (canvasSize.height - activeHeight) * 0.55;
 
@@ -566,6 +355,9 @@ export default function GraphPrototypeScreen() {
               break;
             }
           }
+          if (hit) {
+            setSheetTopicId(hit.id);
+          }
           setSelectedId(hit ? hit.id : null);
         }),
     [selectedId, selectedNeighborIds]
@@ -626,49 +418,17 @@ export default function GraphPrototypeScreen() {
   );
   /* eslint-enable react-hooks/refs, react-hooks/immutability */
 
-  const selectedNode = useMemo(
-    () => INITIAL_NODES.find((n) => n.id === selectedId) ?? null,
-    [selectedId]
-  );
-
-  const renderedNode = useMemo(
-    () => INITIAL_NODES.find((n) => n.id === renderedTopicId) ?? null,
-    [renderedTopicId]
-  );
-
-  const renderedItems = renderedTopicId ? itemsByTopic[renderedTopicId] ?? [] : [];
-  const renderedItemsCount = formatItemCount(renderedItems.length);
-
-  // Плавное перетаскивание шторки вниз
-  const sheetPanGesture = useMemo(
-    () =>
-      Gesture.Pan()
-        .runOnJS(true)
-        .onUpdate((event) => {
-          const nextY = Math.max(0, event.translationY);
-          sheetTranslateY.setValue(nextY);
-        })
-        .onEnd((event) => {
-          if (event.translationY > 80 || event.velocityY > 600) {
-            setSelectedId(null);
-          } else {
-            Animated.spring(sheetTranslateY, {
-              toValue: 0,
-              useNativeDriver: true,
-              bounciness: 4,
-            }).start();
-          }
-        })
-        .onFinalize((_, success) => {
-          if (!success) {
-            Animated.spring(sheetTranslateY, {
-              toValue: 0,
-              useNativeDriver: true,
-              bounciness: 4,
-            }).start();
-          }
-        }),
-    [sheetTranslateY]
+  const sheetTopic = sheetTopicId
+    ? INITIAL_NODES.find((node) => node.id === sheetTopicId) ?? null
+    : null;
+  const selectedItems = sheetTopic
+    ? getItemsForTopic(items, sheetTopic.id)
+    : [];
+  const closeTopic = useCallback(() => setSelectedId(null), []);
+  const dismissTopic = useCallback(() => setSheetTopicId(null), []);
+  const handleItemPress = useCallback(
+    (item: Item) => console.info('Open item details later:', item.id),
+    [],
   );
 
   const closeAddModal = () => {
@@ -689,15 +449,17 @@ export default function GraphPrototypeScreen() {
     const title = newItemTitle.trim();
     if (!title) return;
 
-    const newItem: SavedItem = {
+    const newItem: Item = {
       id: String(Date.now()),
       title,
-      description: newItemDescription.trim(),
+      type: 'text',
+      description: newItemDescription.trim() || 'Текстовая заметка без описания.',
+      sourceLabel: 'Локальная заметка',
+      copyStatus: 'none',
+      topicIds: selectedTopicId === 'inbox' ? [] : [selectedTopicId],
+      createdAt: new Date().toISOString(),
     };
-    setItemsByTopic((current) => ({
-      ...current,
-      [selectedTopicId]: [newItem, ...(current[selectedTopicId] ?? [])],
-    }));
+    setItems((current) => [newItem, ...current]);
     closeAddModal();
     simRef.current?.alpha(0.35).restart();
   };
@@ -711,24 +473,13 @@ export default function GraphPrototypeScreen() {
         behavior="padding"
         keyboardVerticalOffset={110}
       >
-        {/* Верхняя панель: кнопка Назад + инфо о выбранном узле */}
+        {/* Верхняя панель */}
         <View style={styles.topBar}>
           <Pressable onPress={() => router.back()} style={styles.backButton}>
             <Text style={styles.backText}>← Назад</Text>
           </Pressable>
 
-          {selectedNode ? (
-            <View style={styles.infoPill}>
-              <Text style={styles.infoTitle} numberOfLines={1}>
-                {selectedNode.label}
-              </Text>
-              <Text style={styles.infoMeta}>
-                вес: {selectedNode.weight} · r: {(relevanceMap[selectedNode.id] ?? 0).toFixed(2)}
-              </Text>
-            </View>
-          ) : (
-            <Text style={styles.hintText}>Коснитесь узла или начните поиск</Text>
-          )}
+          <Text style={styles.hintText}>Коснитесь узла или начните поиск</Text>
         </View>
 
         {/* Область графа */}
@@ -800,7 +551,7 @@ export default function GraphPrototypeScreen() {
                       ? 0.25
                       : 1;
                 const nodeRadius = node.radius + (isSelected ? 6 : 0);
-                const topicItems = itemsByTopic[node.id] ?? [];
+                const topicItems = getItemsForTopic(items, node.id);
                 const itemCountText = String(topicItems.length);
                 const textWidth = font
                   ? font.measureText(node.label).width
@@ -856,8 +607,10 @@ export default function GraphPrototypeScreen() {
         </View>
 
         {/* Прозрачный контейнер поиска и кнопки добавления */}
-        {selectedId === null && (
-          <View style={styles.searchBar}>
+        <Animated.View
+          pointerEvents={selectedId === null ? 'auto' : 'none'}
+          style={[styles.searchBar, searchBarAnimatedStyle]}
+        >
             <View style={styles.searchField}>
               <TextInput
                 style={styles.searchInput}
@@ -886,60 +639,18 @@ export default function GraphPrototypeScreen() {
             >
               <Text style={styles.addButtonText}>+</Text>
             </Pressable>
-          </View>
-        )}
+        </Animated.View>
       </KeyboardAvoidingView>
 
-      {/* Нижняя шторка темы с плавной анимацией */}
-      {renderedNode && (
-        <Animated.View
-          style={[
-            styles.sheet,
-            {
-              height: sheetHeight,
-              transform: [{ translateY: sheetTranslateY }],
-            },
-          ]}
-        >
-          <GestureDetector gesture={sheetPanGesture}>
-            <View style={styles.sheetHeader}>
-              <View style={styles.sheetHandle} />
-              <View style={styles.sheetHeading}>
-                <Text style={styles.sheetTitle} numberOfLines={1}>
-                  {renderedNode.label}
-                </Text>
-                <Text style={styles.sheetCount}>{renderedItemsCount}</Text>
-              </View>
-            </View>
-          </GestureDetector>
-
-          <ScrollView
-            style={styles.sheetList}
-            contentContainerStyle={styles.sheetListContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {renderedItems.map((item) => (
-              <View key={item.id} style={styles.savedItemCard}>
-                <View style={styles.savedItemHeading}>
-                  <Text style={styles.savedItemTitle} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                  {item.isOfflineSaved === true && (
-                    <View style={styles.offlineBadge}>
-                      <Text style={styles.offlineBadgeText}>сохранено</Text>
-                    </View>
-                  )}
-                </View>
-                <Text
-                  style={styles.savedItemDescription}
-                  numberOfLines={1}
-                >
-                  {item.description}
-                </Text>
-              </View>
-            ))}
-          </ScrollView>
-        </Animated.View>
+      {sheetTopic && (
+        <TopicBottomSheet
+          topic={sheetTopic}
+          isOpen={selectedId !== null}
+          items={selectedItems}
+          onClose={closeTopic}
+          onDismiss={dismissTopic}
+          onItemPress={handleItemPress}
+        />
       )}
 
       {/* Модалка добавления новой заметки */}
@@ -1067,24 +778,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 13,
   },
-  infoPill: {
-    flex: 1,
-    backgroundColor: '#1E293B',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  infoTitle: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  infoMeta: {
-    color: '#94A3B8',
-    fontSize: 11,
-  },
   hintText: {
     flex: 1,
     color: '#64748B',
@@ -1152,89 +845,6 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '500',
     lineHeight: 32,
-  },
-  sheet: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#1E293B',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderWidth: 1,
-    borderBottomWidth: 0,
-    borderColor: '#334155',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-  },
-  sheetHeader: {
-    paddingTop: 12,
-    paddingBottom: 18,
-  },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#64748B',
-    marginBottom: 18,
-  },
-  sheetHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  sheetTitle: {
-    flex: 1,
-    color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  sheetCount: {
-    color: '#94A3B8',
-    fontSize: 13,
-  },
-  sheetList: {
-    flex: 1,
-  },
-  sheetListContent: {
-    paddingBottom: 16,
-  },
-  savedItemCard: {
-    padding: 14,
-    marginBottom: 10,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-    backgroundColor: '#0F172A',
-    gap: 8,
-  },
-  savedItemHeading: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  savedItemTitle: {
-    flex: 1,
-    color: '#F8FAFC',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  offlineBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: '#064E3B',
-  },
-  offlineBadgeText: {
-    color: '#A7F3D0',
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  savedItemDescription: {
-    color: '#94A3B8',
-    fontSize: 13,
   },
   addModalOverlay: {
     flex: 1,
