@@ -9,11 +9,13 @@ export default function HomeScreen() {
         <Text style={styles.title}>LocalVault MVP</Text>
         <Text style={styles.status}>База данных инициализирована</Text>
 
-        <Link href="/dev/proto-embeddings" asChild>
-          <Pressable style={styles.button}>
-            <Text style={styles.buttonText}>Прототип эмбеддингов</Text>
-          </Pressable>
-        </Link>
+        {__DEV__ ? (
+          <Link href="/dev/proto-embeddings" asChild>
+            <Pressable style={styles.button}>
+              <Text style={styles.buttonText}>Прототип эмбеддингов</Text>
+            </Pressable>
+          </Link>
+        ) : null}
         <Link href="/dev/proto-graph" asChild>
           <Pressable style={styles.button}>
             <Text style={styles.buttonText}>Прототип графа</Text>

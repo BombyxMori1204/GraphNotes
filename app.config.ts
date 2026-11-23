@@ -26,6 +26,16 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     "expo-router",
+    "onnxruntime-react-native",
+    "./plugins/with-onnxruntime-package",
+    [
+      "expo-build-properties",
+      {
+        android: {
+          cmakeVersion: "3.31.6"
+        }
+      }
+    ],
     [
       "expo-sqlite",
       {
