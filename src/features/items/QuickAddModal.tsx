@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentRef } from 'react';
 import {
-  KeyboardAvoidingView,
+  Keyboard,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,13 +12,24 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  Gesture,
+  GestureDetector,
+  GestureHandlerRootView,
+  ScrollView as RNGHScrollView,
+} from 'react-native-gesture-handler';
 import Animated, {
   Easing,
+  runOnJS,
+  useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import type { Item } from '@/types';
+import { KeyboardAwareBottom } from '@/components/KeyboardAwareBottom';
 
 interface QuickAddTopic {
   id: string;
@@ -34,6 +44,9 @@ interface QuickAddModalProps {
 }
 
 type QuickAddType = 'link' | 'text';
+
+const AnimatedRNGHScrollView =
+  Animated.createAnimatedComponent(RNGHScrollView);
 
 function getDomain(url: string): string {
   try {
@@ -57,6 +70,7 @@ export function QuickAddModal({
   onSave,
 }: QuickAddModalProps) {
   const { height: screenHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [type, setType] = useState<QuickAddType>('link');
   const [url, setUrl] = useState('');
   const [title, setTitle] = useState('');
@@ -68,9 +82,18 @@ export function QuickAddModal({
   const urlInputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const backdropOpacity = useSharedValue(0);
   const sheetOffset = useSharedValue(36);
+  const dragOffset = useSharedValue(0);
+  const scrollOffset = useSharedValue(0);
+  const startScrollOffset = useSharedValue(0);
 
+  /* eslint-disable react-hooks/immutability */
   useEffect(() => {
     backdropOpacity.value = withTiming(visible ? 1 : 0, { duration: 180 });
+    if (visible) {
+      dragOffset.value = 0;
+      scrollOffset.value = 0;
+      startScrollOffset.value = 0;
+    }
     sheetOffset.value = withTiming(visible ? 0 : 36, {
       duration: visible ? 240 : 180,
       easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
@@ -82,16 +105,23 @@ export function QuickAddModal({
     }
 
     return undefined;
-  }, [backdropOpacity, sheetOffset, visible]);
+  }, [
+    backdropOpacity,
+    dragOffset,
+    scrollOffset,
+    sheetOffset,
+    startScrollOffset,
+    visible,
+  ]);
 
   const backdropStyle = useAnimatedStyle(() => ({
     opacity: backdropOpacity.value,
   }));
   const sheetStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: sheetOffset.value }],
+    transform: [{ translateY: sheetOffset.value + dragOffset.value }],
   }));
 
-  const resetForm = () => {
+  const resetForm = useCallback(() => {
     setType('link');
     setUrl('');
     setTitle('');
@@ -99,12 +129,102 @@ export function QuickAddModal({
     setSaveOfflineCopy(true);
     setSelectedTopicIds([]);
     setValidationMessage('');
-  };
+  }, []);
 
-  const close = () => {
+  const close = useCallback(() => {
     resetForm();
     onClose();
-  };
+  }, [onClose, resetForm]);
+
+  const handleDismissKeyboardAndClose = useCallback(() => {
+    Keyboard.dismiss();
+    close();
+  }, [close]);
+
+  const onFormScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollOffset.value = event.contentOffset.y;
+    },
+  });
+
+  const headerPanGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY(5)
+        .onUpdate((event) => {
+          if (event.translationY > 0) {
+            dragOffset.value = event.translationY;
+          }
+        })
+        .onEnd((event) => {
+          if (event.translationY > 80 || event.velocityY > 500) {
+            dragOffset.value = withTiming(
+              screenHeight,
+              { duration: 200 },
+              (finished) => {
+                if (finished) {
+                  runOnJS(handleDismissKeyboardAndClose)();
+                }
+              },
+            );
+          } else {
+            dragOffset.value = withSpring(0, {
+              damping: 22,
+              stiffness: 220,
+            });
+          }
+        }),
+    [dragOffset, handleDismissKeyboardAndClose, screenHeight],
+  );
+  const listPanGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .activeOffsetY(10)
+        .failOffsetX([-20, 20])
+        .onBegin(() => {
+          startScrollOffset.value = scrollOffset.value;
+        })
+        .onUpdate((event) => {
+          if (startScrollOffset.value <= 2 && event.translationY > 0) {
+            dragOffset.value = event.translationY;
+          }
+        })
+        .onEnd((event) => {
+          if (startScrollOffset.value > 2 || event.translationY <= 0) {
+            return;
+          }
+
+          if (dragOffset.value > 80 || event.velocityY > 500) {
+            dragOffset.value = withTiming(
+              screenHeight,
+              { duration: 200 },
+              (finished) => {
+                if (finished) {
+                  runOnJS(handleDismissKeyboardAndClose)();
+                }
+              },
+            );
+          } else {
+            dragOffset.value = withSpring(0, {
+              damping: 22,
+              stiffness: 220,
+            });
+          }
+        }),
+    [
+      dragOffset,
+      handleDismissKeyboardAndClose,
+      screenHeight,
+      scrollOffset,
+      startScrollOffset,
+    ],
+  );
+  const nativeScrollGesture = useMemo(() => Gesture.Native(), []);
+  const listGesture = useMemo(
+    () => Gesture.Simultaneous(listPanGesture, nativeScrollGesture),
+    [listPanGesture, nativeScrollGesture],
+  );
+  /* eslint-enable react-hooks/immutability */
 
   const save = async () => {
     const normalizedUrl = url.trim();
@@ -166,63 +286,73 @@ export function QuickAddModal({
       statusBarTranslucent
       onRequestClose={close}
     >
-      <View style={styles.overlay}>
-        <Animated.View style={[styles.backdrop, backdropStyle]}>
-          <Pressable
-            accessibilityLabel="Закрыть окно быстрого добавления"
-            onPress={close}
-            style={StyleSheet.absoluteFill}
-          />
-        </Animated.View>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardAvoiding}
-        >
-          <Animated.View
-            style={[
-              styles.sheet,
-              { maxHeight: screenHeight * 0.9 },
-              sheetStyle,
-            ]}
+      <GestureHandlerRootView style={styles.gestureRoot}>
+        <View style={styles.overlay}>
+          <Animated.View style={[styles.backdrop, backdropStyle]}>
+            <Pressable
+              accessibilityLabel="Закрыть окно быстрого добавления"
+              onPress={close}
+              style={StyleSheet.absoluteFill}
+            />
+          </Animated.View>
+          <KeyboardAwareBottom
+            maxHeight={screenHeight * 0.9}
+            style={[styles.keyboardAvoiding, { paddingBottom: insets.bottom }]}
           >
-            <View style={styles.handle} />
-            <Text style={styles.heading}>Быстрое добавление</Text>
-            <View style={styles.typeRow}>
-              {([
-                ['link', 'Ссылка'],
-                ['text', 'Текст'],
-              ] as const).map(([value, label]) => {
-                const isActive = type === value;
-                return (
-                  <Pressable
-                    key={value}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: isActive }}
-                    onPress={() => {
-                      setType(value);
-                      setValidationMessage('');
-                    }}
-                    style={[styles.typeChip, isActive && styles.activeTypeChip]}
-                  >
-                    <Text
+            <Animated.View
+              style={[
+                styles.sheet,
+                { maxHeight: screenHeight * 0.9 },
+                sheetStyle,
+              ]}
+            >
+              <GestureDetector gesture={headerPanGesture}>
+                <View style={styles.sheetHeader}>
+                  <View style={styles.handle} />
+                  <Text style={styles.heading}>Быстрое добавление</Text>
+                </View>
+              </GestureDetector>
+              <GestureDetector gesture={listGesture}>
+                <AnimatedRNGHScrollView
+                  style={styles.form}
+                  contentContainerStyle={styles.formContent}
+                  keyboardShouldPersistTaps="handled"
+                  onScroll={onFormScroll}
+                  scrollEventThrottle={16}
+                  showsVerticalScrollIndicator={false}
+                >
+              <View style={styles.typeRow}>
+                {([
+                  ['link', 'Ссылка'],
+                  ['text', 'Текст'],
+                ] as const).map(([value, label]) => {
+                  const isActive = type === value;
+                  return (
+                    <Pressable
+                      key={value}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isActive }}
+                      onPress={() => {
+                        setType(value);
+                        setValidationMessage('');
+                      }}
                       style={[
-                        styles.typeChipText,
-                        isActive && styles.activeTypeChipText,
+                        styles.typeChip,
+                        isActive && styles.activeTypeChip,
                       ]}
                     >
-                      {label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            <ScrollView
-              style={styles.form}
-              contentContainerStyle={styles.formContent}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
+                      <Text
+                        style={[
+                          styles.typeChipText,
+                          isActive && styles.activeTypeChipText,
+                        ]}
+                      >
+                        {label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
               {type === 'link' && (
                 <>
                   <Text style={styles.label}>Ссылка</Text>
@@ -332,23 +462,27 @@ export function QuickAddModal({
                   {validationMessage}
                 </Text>
               )}
-            </ScrollView>
-
-            <View style={styles.footer}>
-              <Pressable
-                accessibilityRole="button"
-                disabled={isSaving}
-                onPress={() => void save()}
-                style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
-              >
-                <Text style={styles.saveButtonText}>
-                  {isSaving ? 'Сохранение…' : 'Сохранить'}
-                </Text>
-              </Pressable>
-            </View>
-          </Animated.View>
-        </KeyboardAvoidingView>
-      </View>
+              <View style={styles.footer}>
+                <Pressable
+                  accessibilityRole="button"
+                  disabled={isSaving}
+                  onPress={() => void save()}
+                  style={[
+                    styles.saveButton,
+                    isSaving && styles.saveButtonDisabled,
+                  ]}
+                >
+                  <Text style={styles.saveButtonText}>
+                    {isSaving ? 'Сохранение…' : 'Сохранить'}
+                  </Text>
+                </Pressable>
+              </View>
+                </AnimatedRNGHScrollView>
+              </GestureDetector>
+            </Animated.View>
+          </KeyboardAwareBottom>
+        </View>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
@@ -358,6 +492,9 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-end',
     backgroundColor: 'transparent',
+  },
+  gestureRoot: {
+    flex: 1,
   },
   backdrop: {
     position: 'absolute',
@@ -381,6 +518,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#1E293B',
     paddingTop: 10,
   },
+  sheetHeader: {
+    paddingHorizontal: 20,
+  },
   handle: {
     alignSelf: 'center',
     width: 36,
@@ -390,7 +530,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#64748B',
   },
   heading: {
-    marginHorizontal: 20,
+    marginHorizontal: 0,
     marginBottom: 12,
     color: '#FFFFFF',
     fontSize: 19,
@@ -399,7 +539,7 @@ const styles = StyleSheet.create({
   typeRow: {
     flexDirection: 'row',
     gap: 8,
-    paddingHorizontal: 20,
+    paddingHorizontal: 0,
     paddingBottom: 8,
   },
   typeChip: {
@@ -428,7 +568,7 @@ const styles = StyleSheet.create({
   },
   formContent: {
     paddingHorizontal: 20,
-    paddingBottom: 8,
+    paddingBottom: 12,
   },
   label: {
     marginTop: 10,
@@ -497,6 +637,8 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   footer: {
+    marginHorizontal: -20,
+    marginTop: 8,
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 12,

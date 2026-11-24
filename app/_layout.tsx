@@ -39,7 +39,17 @@ export default function RootLayout() {
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         {status === 'ready' ? (
-          <Stack />
+          <Stack screenOptions={{ headerShown: true }}>
+            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen
+              name="dev/proto-graph"
+              options={{ title: 'Прототип графа' }}
+            />
+            <Stack.Screen
+              name="dev/proto-embeddings"
+              options={{ title: 'Прототип эмбеддингов' }}
+            />
+          </Stack>
         ) : (
           <SafeAreaView style={styles.centered}>
             {status === 'loading' ? (

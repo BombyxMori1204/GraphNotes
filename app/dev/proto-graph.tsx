@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   StyleSheet,
@@ -9,6 +8,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { router, usePathname } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   Canvas,
@@ -29,6 +29,7 @@ import {
   forceSimulation,
   forceX,
   forceY,
+  type ForceLink,
   type Simulation,
   type SimulationLinkDatum,
   type SimulationNodeDatum,
@@ -36,7 +37,10 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   useAnimatedStyle,
+  useDerivedValue,
+  useSharedValue,
   withTiming,
+  type SharedValue,
 } from 'react-native-reanimated';
 import type { Item } from '@/types';
 import {
@@ -54,6 +58,7 @@ import {
 import { QuickAddModal } from '@/features/items/QuickAddModal';
 import { TopicBottomSheet } from '@/features/items/TopicBottomSheet';
 import { getTopicNodeDiameter, mmToDp } from '@/features/graph/metrics';
+import { KeyboardAwareBottom } from '@/components/KeyboardAwareBottom';
 
 const SEARCH_PANEL_HEIGHT = mmToDp(12);
 const SEARCH_PANEL_HIDE_OFFSET = mmToDp(3);
@@ -78,6 +83,304 @@ interface TopicMetrics {
   readCount: number;
   progress: number;
   inboxCount: number;
+}
+
+interface GraphPosition {
+  x: number;
+  y: number;
+}
+
+type GraphPositions = Record<string, GraphPosition>;
+
+interface GraphNodeVisualProps {
+  node: TopicNode;
+  positions: SharedValue<GraphPositions>;
+  selectedId: string | null;
+  isNeighbor: boolean;
+  relevance: number;
+  isSearching: boolean;
+  metrics: TopicMetrics | undefined;
+  font: ReturnType<typeof matchFont>;
+  countFont: ReturnType<typeof matchFont>;
+}
+
+function GraphNodeVisual({
+  node,
+  positions,
+  selectedId,
+  isNeighbor,
+  relevance,
+  isSearching,
+  metrics,
+  font,
+  countFont,
+}: GraphNodeVisualProps) {
+  const isSelected = node.id === selectedId;
+  const opacity =
+    selectedId !== null
+      ? isSelected || isNeighbor
+        ? 1
+        : 0
+      : isSearching && relevance === 0
+        ? 0.25
+        : 1;
+  const nodeRadius = node.radius + (isSelected ? 6 : 0);
+  const arcRadius = nodeRadius + (isSelected ? 7 : 3.5);
+  const itemCountText = String(
+    node.id === 'inbox'
+      ? metrics?.inboxCount ?? 0
+      : metrics?.totalCount ?? 0,
+  );
+  const progress = metrics?.progress ?? 0;
+  const textWidth = font
+    ? font.measureText(node.label).width
+    : node.label.length * 6.5;
+  const itemCountWidth = countFont
+    ? countFont.measureText(itemCountText).width
+    : itemCountText.length * 5.5;
+  const inboxBadgeText =
+    (metrics?.inboxCount ?? 0) > 99
+      ? '99+'
+      : String(metrics?.inboxCount ?? 0);
+  const inboxBadgeTextWidth = countFont
+    ? countFont.measureText(inboxBadgeText).width
+    : inboxBadgeText.length * 5.5;
+  const inboxBadgeWidth = Math.max(20, inboxBadgeTextWidth + 10);
+  const nodeX = useDerivedValue(
+    () => positions.value[node.id]?.x ?? node.x ?? 0,
+  );
+  const nodeY = useDerivedValue(
+    () => positions.value[node.id]?.y ?? node.y ?? 0,
+  );
+  const labelX = useDerivedValue(
+    () => nodeX.value - textWidth / 2,
+  );
+  const labelY = useDerivedValue(() => nodeY.value + 4);
+  const countX = useDerivedValue(
+    () => nodeX.value - itemCountWidth / 2,
+  );
+  const countY = useDerivedValue(() => nodeY.value + 18);
+  const inboxBadgeX = useDerivedValue(
+    () => nodeX.value + nodeRadius * 0.7,
+  );
+  const inboxBadgeY = useDerivedValue(
+    () => nodeY.value - nodeRadius * 0.7,
+  );
+  const inboxBadgeRectX = useDerivedValue(
+    () => inboxBadgeX.value - inboxBadgeWidth / 2,
+  );
+  const inboxBadgeRectY = useDerivedValue(
+    () => inboxBadgeY.value - 10,
+  );
+  const inboxBadgeTextX = useDerivedValue(
+    () => inboxBadgeX.value - inboxBadgeTextWidth / 2,
+  );
+  const inboxBadgeTextY = useDerivedValue(
+    () => inboxBadgeY.value + 3.5,
+  );
+  const progressTransform = useDerivedValue(
+    () => [
+      { translateX: nodeX.value },
+      { translateY: nodeY.value },
+    ],
+  );
+  const progressPath = useMemo(
+    () =>
+      node.id !== 'inbox' && progress > 0 && progress < 1
+        ? Skia.PathBuilder.Make()
+            .addArc(
+              {
+                x: -arcRadius,
+                y: -arcRadius,
+                width: arcRadius * 2,
+                height: arcRadius * 2,
+              },
+              -90,
+              progress * 360,
+            )
+            .detach()
+        : null,
+    [arcRadius, node.id, progress],
+  );
+
+  return (
+    <>
+      <Circle
+        cx={nodeX}
+        cy={nodeY}
+        r={nodeRadius}
+        color={isSelected ? '#FFFFFF' : node.color}
+        opacity={opacity}
+      />
+      {node.id !== 'inbox' && (
+        <>
+          <Circle
+            cx={nodeX}
+            cy={nodeY}
+            r={arcRadius}
+            color="rgba(148, 163, 184, 0.2)"
+            style="stroke"
+            strokeWidth={2.5}
+            opacity={opacity * (isSelected ? 0.45 : 1)}
+          />
+          {progress >= 1 ? (
+            <Circle
+              cx={nodeX}
+              cy={nodeY}
+              r={arcRadius}
+              color="#4ADE80"
+              style="stroke"
+              strokeWidth={2.5}
+              strokeCap="round"
+              opacity={opacity * (isSelected ? 0.5 : 1)}
+            />
+          ) : (
+            progressPath && (
+              <Path
+                path={progressPath}
+                transform={progressTransform}
+                color="#38BDF8"
+                style="stroke"
+                strokeWidth={2.5}
+                strokeCap="round"
+                opacity={opacity * (isSelected ? 0.5 : 1)}
+              />
+            )
+          )}
+        </>
+      )}
+      {(isSelected || (isSearching && relevance > 0)) && (
+        <Circle
+          cx={nodeX}
+          cy={nodeY}
+          r={nodeRadius + 2}
+          color={isSelected ? '#38BDF8' : '#FDE047'}
+          style="stroke"
+          strokeWidth={isSelected ? 3 : 2}
+        />
+      )}
+      {font && (
+        <SkiaText
+          x={labelX}
+          y={labelY}
+          text={node.label}
+          font={font}
+          color={isSelected ? '#0F172A' : '#FFFFFF'}
+          opacity={opacity}
+        />
+      )}
+      {countFont && (
+        <SkiaText
+          x={countX}
+          y={countY}
+          text={itemCountText}
+          font={countFont}
+          color={isSelected ? '#334155' : '#CBD5E1'}
+          opacity={opacity}
+        />
+      )}
+      {node.id === 'inbox' && (metrics?.inboxCount ?? 0) > 0 && (
+        <>
+          {inboxBadgeText.length > 1 ? (
+            <>
+              <RoundedRect
+                x={inboxBadgeRectX}
+                y={inboxBadgeRectY}
+                width={inboxBadgeWidth}
+                height={20}
+                r={10}
+                color="#EF4444"
+                opacity={opacity}
+              />
+              <RoundedRect
+                x={inboxBadgeRectX}
+                y={inboxBadgeRectY}
+                width={inboxBadgeWidth}
+                height={20}
+                r={10}
+                color="#0F172A"
+                style="stroke"
+                strokeWidth={1.5}
+                opacity={opacity}
+              />
+            </>
+          ) : (
+            <>
+              <Circle
+                cx={inboxBadgeX}
+                cy={inboxBadgeY}
+                r={10}
+                color="#EF4444"
+                opacity={opacity}
+              />
+              <Circle
+                cx={inboxBadgeX}
+                cy={inboxBadgeY}
+                r={10}
+                color="#0F172A"
+                style="stroke"
+                strokeWidth={1.5}
+                opacity={opacity}
+              />
+            </>
+          )}
+          {countFont && (
+            <SkiaText
+              x={inboxBadgeTextX}
+              y={inboxBadgeTextY}
+              text={inboxBadgeText}
+              font={countFont}
+              color="#FFFFFF"
+              opacity={opacity}
+            />
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+interface GraphLinkVisualProps {
+  sourceId: string;
+  targetId: string;
+  positions: SharedValue<GraphPositions>;
+  opacity: number;
+}
+
+function GraphLinkVisual({
+  sourceId,
+  targetId,
+  positions,
+  opacity,
+}: GraphLinkVisualProps) {
+  const p1 = useDerivedValue(
+    () => vec(positions.value[sourceId]?.x ?? 0, positions.value[sourceId]?.y ?? 0),
+  );
+  const p2 = useDerivedValue(
+    () => vec(positions.value[targetId]?.x ?? 0, positions.value[targetId]?.y ?? 0),
+  );
+
+  return (
+    <Line
+      p1={p1}
+      p2={p2}
+      color="rgba(148, 163, 184, 0.25)"
+      strokeWidth={1.5}
+      opacity={opacity}
+    />
+  );
+}
+
+function getLinkNodeId(value: string | TopicNode): string {
+  return typeof value === 'string' ? value : value.id;
+}
+
+function getLinkSignature(link: TopicLink): string {
+  return JSON.stringify([
+    getLinkNodeId(link.source),
+    getLinkNodeId(link.target),
+    link.weight,
+  ]);
 }
 
 const TOPIC_KEYWORDS: Record<string, string[]> = {
@@ -137,6 +440,8 @@ function loadGraphData() {
 
 export default function GraphPrototypeScreen() {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const pathname = usePathname();
+  const isDevRoute = pathname.startsWith('/dev/');
 
   const [canvasSize, setCanvasSize] = useState({
     width: screenWidth,
@@ -150,8 +455,6 @@ export default function GraphPrototypeScreen() {
   const [topics, setTopics] = useState<TopicWithStats[]>([]);
   const [topicEdges, setTopicEdges] = useState<TopicEdge[]>([]);
   const [inboxCount, setInboxCount] = useState(0);
-  const [nodes, setNodes] = useState<TopicNode[]>([]);
-  const [links, setLinks] = useState<TopicLink[]>([]);
   const [toastMessage, setToastMessage] = useState('');
 
   const refreshGraphData = useCallback(async () => {
@@ -241,13 +544,13 @@ export default function GraphPrototypeScreen() {
   }, [inboxCount, topics]);
 
   const simRef = useRef<Simulation<TopicNode, TopicLink> | null>(null);
-  const topicMetricsRef = useRef(topicMetrics);
   const nodesRef = useRef<TopicNode[]>([]);
+  const linksRef = useRef<TopicLink[]>([]);
+  const linkForceRef = useRef<ForceLink<TopicNode, TopicLink> | null>(null);
+  const positions = useSharedValue<GraphPositions>({});
+  const canvasSizeRef = useRef(canvasSize);
+  const previousCanvasSizeRef = useRef(canvasSize);
   const draggedNodeRef = useRef<TopicNode | null>(null);
-
-  useEffect(() => {
-    topicMetricsRef.current = topicMetrics;
-  }, [topicMetrics]);
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -293,7 +596,6 @@ export default function GraphPrototypeScreen() {
         },
       ],
     }),
-    [selectedId],
   );
 
   const relevanceMap = useMemo(() => {
@@ -303,6 +605,14 @@ export default function GraphPrototypeScreen() {
     }
     return map;
   }, [graphTopicNodes, query]);
+  const relevanceSignature = graphTopicNodes
+    .map((node) => `${node.id}:${relevanceMap[node.id] ?? 0}`)
+    .join('|');
+  const relevanceMapRef = useRef(relevanceMap);
+
+  useEffect(() => {
+    relevanceMapRef.current = relevanceMap;
+  }, [relevanceMap]);
 
   const selectedNeighborIds = useMemo(() => {
     const neighbors = new Set<string>();
@@ -324,89 +634,159 @@ export default function GraphPrototypeScreen() {
     selectedModeRef.current = { selectedId, neighborIds: selectedNeighborIds };
   }, [selectedId, selectedNeighborIds]);
 
-  // Инициализация симуляции
   useEffect(() => {
-    const { width, height } = canvasSize;
-    const previousPositions = new Map(
-      nodesRef.current.map((node) => [node.id, { x: node.x, y: node.y }]),
+    canvasSizeRef.current = canvasSize;
+  }, [canvasSize]);
+
+  useEffect(() => {
+    const linkForce = forceLink<TopicNode, TopicLink>([])
+      .id((node) => node.id)
+      .distance(105)
+      .strength((link) => Math.min(0.75, 0.2 + link.weight * 0.1));
+    const collideForce = forceCollide<TopicNode>().radius(
+      (node) => node.radius + 8,
     );
-    const simNodes: TopicNode[] = graphTopicNodes.map((n, i) => {
-      const previousPosition = previousPositions.get(n.id);
-      const metrics = topicMetricsRef.current.get(n.id);
-      const itemCount =
-        n.id === 'inbox'
-          ? metrics?.inboxCount ?? 0
-          : metrics?.totalCount ?? 0;
-      return {
-        ...n,
-        radius: getTopicNodeDiameter(itemCount) / 2,
-        x: previousPosition?.x ?? width / 2 + Math.cos(i) * 40,
-        y: previousPosition?.y ?? height / 2 + Math.sin(i) * 40,
-      };
-    });
-    const simLinks: TopicLink[] = graphTopicLinks.map((link) => ({ ...link }));
-
-    nodesRef.current = simNodes;
-
-    const simulation = forceSimulation<TopicNode>(simNodes)
+    const simulation = forceSimulation<TopicNode>([])
+      .velocityDecay(0.68)
+      .alphaDecay(0.05)
+      .alphaMin(0.008)
+      .force('link', linkForce)
+      .force('charge', forceManyBody<TopicNode>().strength(-160))
       .force(
-        'link',
-        forceLink<TopicNode, TopicLink>(simLinks)
-          .id((d) => d.id)
-          .distance(105)
-          .strength((link) => Math.min(0.75, 0.2 + link.weight * 0.1))
+        'center',
+        forceCenter(canvasSizeRef.current.width / 2, canvasSizeRef.current.height / 2),
       )
-      .force('charge', forceManyBody().strength(-160))
-      .force('center', forceCenter(width / 2, height / 2))
-      .force(
-        'collide',
-        forceCollide<TopicNode>().radius((d) => d.radius + 8)
-      )
+      .force('collide', collideForce)
       .on('tick', () => {
+        const { width, height } = canvasSizeRef.current;
         const { selectedId: focusedId, neighborIds } = selectedModeRef.current;
         const currentActiveHeight = focusedId === null ? height : height * 0.35;
-        for (const n of simNodes) {
-          const isVisible = n.id === focusedId || neighborIds.has(n.id);
-          const pad = n.radius + (n.id === focusedId ? 6 : 0) + 4;
+        const nextPositions: GraphPositions = {};
+
+        for (const node of nodesRef.current) {
+          const isVisible = node.id === focusedId || neighborIds.has(node.id);
+          const pad = node.radius + (node.id === focusedId ? 6 : 0) + 4;
           const minY =
             focusedId !== null && !isVisible ? currentActiveHeight + pad : pad;
           const maxY =
             focusedId !== null && isVisible
               ? Math.max(pad, currentActiveHeight - pad)
               : height - pad;
-          n.x = Math.max(pad, Math.min(width - pad, n.x ?? width / 2));
-          n.y = Math.max(minY, Math.min(maxY, n.y ?? height / 2));
+          node.x = Math.max(pad, Math.min(width - pad, node.x ?? width / 2));
+          node.y = Math.max(minY, Math.min(maxY, node.y ?? height / 2));
+          nextPositions[node.id] = { x: node.x, y: node.y };
         }
-        setNodes([...simNodes]);
-        setLinks([...simLinks]);
+
+        positions.value = nextPositions;
+        if (simulation.alpha() < simulation.alphaMin()) {
+          simulation.stop();
+        }
       });
 
     simRef.current = simulation;
+    linkForceRef.current = linkForce;
 
     return () => {
       simulation.stop();
+      simRef.current = null;
+      linkForceRef.current = null;
     };
-  }, [canvasSize, graphTopicLinks, graphTopicNodes]);
+  }, [positions]);
 
   useEffect(() => {
     const simulation = simRef.current;
     if (!simulation) return;
 
-    for (const node of simulation.nodes()) {
-      const metrics = topicMetrics.get(node.id);
+    const previousCanvasSize = previousCanvasSizeRef.current;
+    const layoutChanged =
+      previousCanvasSize.width !== canvasSize.width ||
+      previousCanvasSize.height !== canvasSize.height;
+    previousCanvasSizeRef.current = canvasSize;
+
+    const previousNodes = nodesRef.current;
+    const nodesById = new Map(previousNodes.map((node) => [node.id, node]));
+    let nodePhysicsChanged = previousNodes.length !== graphTopicNodes.length;
+    const updatedNodes = graphTopicNodes.map((source, index) => {
+      if (previousNodes[index]?.id !== source.id) {
+        nodePhysicsChanged = true;
+      }
+      const metrics = topicMetrics.get(source.id);
       const itemCount =
-        node.id === 'inbox'
+        source.id === 'inbox'
           ? metrics?.inboxCount ?? 0
           : metrics?.totalCount ?? 0;
-      node.radius = getTopicNodeDiameter(itemCount) / 2;
+      const radius = getTopicNodeDiameter(itemCount) / 2;
+      const existing = nodesById.get(source.id);
+
+      if (existing) {
+        if (existing.radius !== radius) {
+          nodePhysicsChanged = true;
+        }
+        Object.assign(existing, source, { radius });
+        return existing;
+      }
+
+      nodePhysicsChanged = true;
+      return {
+        ...source,
+        radius,
+        x: canvasSize.width / 2 + Math.cos(index) * 24,
+        y: canvasSize.height / 2 + Math.sin(index) * 24,
+        vx: 0,
+        vy: 0,
+      };
+    });
+    if (nodePhysicsChanged || layoutChanged) {
+      previousNodes.splice(0, previousNodes.length, ...updatedNodes);
     }
 
-    simulation.force(
-      'collide',
-      forceCollide<TopicNode>().radius((node) => node.radius + 8),
-    );
-    simulation.alpha(0.25).restart();
-  }, [topicMetrics]);
+    const nextLinks = graphTopicLinks.map((link) => ({ ...link }));
+    const previousLinkSignatures = linksRef.current
+      .map(getLinkSignature)
+      .sort();
+    const nextLinkSignatures = nextLinks.map(getLinkSignature).sort();
+    const linksChanged =
+      previousLinkSignatures.length !== nextLinkSignatures.length ||
+      previousLinkSignatures.some(
+        (signature, index) => signature !== nextLinkSignatures[index],
+      );
+
+    nodesRef.current = previousNodes;
+    if (layoutChanged) {
+      simulation.force(
+        'center',
+        forceCenter(canvasSize.width / 2, canvasSize.height / 2),
+      );
+    }
+
+    if (nodePhysicsChanged || layoutChanged) {
+      for (const node of updatedNodes) {
+        node.vx = 0;
+        node.vy = 0;
+      }
+      simulation
+        .force(
+          'collide',
+          forceCollide<TopicNode>().radius((node) => node.radius + 8),
+        )
+        .nodes(previousNodes);
+    }
+
+    if (linksChanged) {
+      linksRef.current = nextLinks;
+      linkForceRef.current?.links(nextLinks);
+    }
+
+    if (nodePhysicsChanged || linksChanged || layoutChanged) {
+      simulation.alpha(0.12).restart();
+    }
+  }, [
+    canvasSize,
+    graphTopicLinks,
+    graphTopicNodes,
+    positions,
+    topicMetrics,
+  ]);
 
   // Реакция физики на поисковый запрос и выбор темы
   useEffect(() => {
@@ -430,13 +810,13 @@ export default function GraphPrototypeScreen() {
         forceX<TopicNode>((node) =>
           node.id === selectedId
             ? focusedX
-            : selectedNeighborIds.has(node.id)
+            : selectedModeRef.current.neighborIds.has(node.id)
               ? neighborsX
               : centerX
         ).strength((node) =>
           node.id === selectedId
             ? 0.9
-            : selectedNeighborIds.has(node.id)
+            : selectedModeRef.current.neighborIds.has(node.id)
               ? 0.65
               : 0.05
         )
@@ -444,13 +824,14 @@ export default function GraphPrototypeScreen() {
       sim.force(
         'y',
         forceY<TopicNode>((node) =>
-          node.id === selectedId || selectedNeighborIds.has(node.id)
+          node.id === selectedId ||
+          selectedModeRef.current.neighborIds.has(node.id)
             ? focusedY
             : hiddenY
         ).strength((node) =>
           node.id === selectedId
             ? 0.9
-            : selectedNeighborIds.has(node.id)
+            : selectedModeRef.current.neighborIds.has(node.id)
               ? 0.65
               : 0.7
         )
@@ -460,20 +841,20 @@ export default function GraphPrototypeScreen() {
       sim.force(
         'x',
         forceX<TopicNode>((d) => {
-          const r = relevanceMap[d.id] ?? 0;
+          const r = relevanceMapRef.current[d.id] ?? 0;
           return r > 0 ? anchorX : centerX;
         }).strength((d) => {
-          const r = relevanceMap[d.id] ?? 0;
+          const r = relevanceMapRef.current[d.id] ?? 0;
           return r > 0 ? 0.35 * r : 0.05;
         })
       );
       sim.force(
         'y',
         forceY<TopicNode>((d) => {
-          const r = relevanceMap[d.id] ?? 0;
+          const r = relevanceMapRef.current[d.id] ?? 0;
           return r > 0 ? anchorY : anchorY * 0.25;
         }).strength((d) => {
-          const r = relevanceMap[d.id] ?? 0;
+          const r = relevanceMapRef.current[d.id] ?? 0;
           return r > 0 ? 0.35 * r : 0.12;
         })
       );
@@ -486,9 +867,8 @@ export default function GraphPrototypeScreen() {
     sim.alpha(0.7).restart();
   }, [
     query,
-    relevanceMap,
+    relevanceSignature,
     selectedId,
-    selectedNeighborIds,
     activeHeight,
     anchorX,
     anchorY,
@@ -595,6 +975,13 @@ export default function GraphPrototypeScreen() {
     : [];
   const closeTopic = useCallback(() => setSelectedId(null), []);
   const dismissTopic = useCallback(() => setSheetTopicId(null), []);
+  const goBackFromDev = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/');
+    }
+  }, []);
   const handleItemPress = useCallback(async (item: Item) => {
     const isRead = !item.isRead;
     setItems((current) =>
@@ -665,27 +1052,41 @@ export default function GraphPrototypeScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior="padding"
-        keyboardVerticalOffset={110}
-      >
-        <View style={styles.topBar}>
-          <Text style={styles.hintText}>Коснитесь узла или начните поиск</Text>
-        </View>
+      <View style={styles.topBar}>
+        {isDevRoute && (
+          <Pressable
+            accessibilityRole="button"
+            onPress={goBackFromDev}
+            style={styles.backButton}
+          >
+            <Text style={styles.backText}>‹ Назад</Text>
+          </Pressable>
+        )}
+        <Text style={styles.hintText}>Коснитесь узла или начните поиск</Text>
+        {__DEV__ && !isDevRoute && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Открыть прототип эмбеддингов"
+            onPress={() => router.push('/dev/proto-embeddings')}
+            style={styles.devButton}
+          >
+            <Text style={styles.devButtonText}>DEV</Text>
+          </Pressable>
+        )}
+      </View>
 
-        {/* Область графа */}
-        <View
-          style={styles.canvasWrap}
-          onLayout={(e) => {
-            const { width, height } = e.nativeEvent.layout;
-            if (width > 0 && height > 0) {
-              setCanvasSize({ width, height });
-            }
-          }}
-        >
-          <GestureDetector gesture={Gesture.Exclusive(panGesture, tapGesture)}>
-            <Canvas style={styles.flex}>
+      {/* Область графа */}
+      <View
+        style={styles.canvasWrap}
+        onLayout={(e) => {
+          const { width, height } = e.nativeEvent.layout;
+          if (width > 0 && height > 0) {
+            setCanvasSize({ width, height });
+          }
+        }}
+      >
+        <GestureDetector gesture={Gesture.Exclusive(panGesture, tapGesture)}>
+          <Canvas style={styles.flex}>
               {/* Якорь у большого пальца */}
               {selectedId === null && (
                 <>
@@ -706,224 +1107,47 @@ export default function GraphPrototypeScreen() {
                 </>
               )}
 
-              {/* Рёбра */}
-              {links.map((link, idx) => {
-                const s = link.source as TopicNode;
-                const t = link.target as TopicNode;
-                if (typeof s !== 'object' || typeof t !== 'object') return null;
+              {graphTopicLinks.map((link, index) => {
+                const sourceId = getLinkNodeId(link.source);
+                const targetId = getLinkNodeId(link.target);
+                const opacity =
+                  selectedId === null ||
+                  sourceId === selectedId ||
+                  targetId === selectedId
+                    ? 1
+                    : 0;
+
                 return (
-                  <Line
-                    key={idx}
-                    p1={vec(s.x ?? 0, s.y ?? 0)}
-                    p2={vec(t.x ?? 0, t.y ?? 0)}
-                    color="rgba(148, 163, 184, 0.25)"
-                    strokeWidth={1.5}
-                    opacity={
-                      selectedId === null || s.id === selectedId || t.id === selectedId
-                        ? 1
-                        : 0
-                    }
+                  <GraphLinkVisual
+                    key={`${sourceId}-${targetId}-${index}`}
+                    sourceId={sourceId}
+                    targetId={targetId}
+                    positions={positions}
+                    opacity={opacity}
                   />
                 );
               })}
 
-              {/* Узлы */}
-              {nodes.map((node) => {
-                const x = node.x ?? 0;
-                const y = node.y ?? 0;
-                const r = relevanceMap[node.id] ?? 0;
-                const isSelected = node.id === selectedId;
-                const isNeighbor = selectedNeighborIds.has(node.id);
-                const opacity =
-                  selectedId !== null
-                    ? isSelected || isNeighbor
-                      ? 1
-                      : 0
-                    : isSearching && r === 0
-                      ? 0.25
-                      : 1;
-                const nodeRadius = node.radius + (isSelected ? 6 : 0);
-                const metrics = topicMetrics.get(node.id);
-                const itemCountText = String(
-                  node.id === 'inbox'
-                    ? metrics?.inboxCount ?? 0
-                    : metrics?.totalCount ?? 0,
-                );
-                const progress = metrics?.progress ?? 0;
-                const arcRadius = nodeRadius + (isSelected ? 7 : 3.5);
-                const progressPath =
-                  node.id !== 'inbox' && progress > 0 && progress < 1
-                    ? Skia.PathBuilder.Make()
-                        .addArc(
-                          {
-                            x: x - arcRadius,
-                            y: y - arcRadius,
-                            width: arcRadius * 2,
-                            height: arcRadius * 2,
-                          },
-                          -90,
-                          progress * 360,
-                        )
-                        .detach()
-                    : null;
-                const textWidth = font
-                  ? font.measureText(node.label).width
-                  : node.label.length * 6.5;
-                const itemCountWidth = countFont
-                  ? countFont.measureText(itemCountText).width
-                  : itemCountText.length * 5.5;
-                const inboxBadgeText =
-                  (metrics?.inboxCount ?? 0) > 99
-                    ? '99+'
-                    : String(metrics?.inboxCount ?? 0);
-                const inboxBadgeTextWidth = countFont
-                  ? countFont.measureText(inboxBadgeText).width
-                  : inboxBadgeText.length * 5.5;
-                const inboxBadgeWidth = Math.max(20, inboxBadgeTextWidth + 10);
-                const inboxBadgeX = x + nodeRadius * 0.7;
-                const inboxBadgeY = y - nodeRadius * 0.7;
+              {graphTopicNodes.map((node) => (
+                <GraphNodeVisual
+                  key={node.id}
+                  node={node}
+                  positions={positions}
+                  selectedId={selectedId}
+                  isNeighbor={selectedNeighborIds.has(node.id)}
+                  relevance={relevanceMap[node.id] ?? 0}
+                  isSearching={isSearching}
+                  metrics={topicMetrics.get(node.id)}
+                  font={font}
+                  countFont={countFont}
+                />
+              ))}
+          </Canvas>
+        </GestureDetector>
+      </View>
 
-                return (
-                  <React.Fragment key={node.id}>
-                    <Circle
-                      cx={x}
-                      cy={y}
-                      r={nodeRadius}
-                      color={isSelected ? '#FFFFFF' : node.color}
-                      opacity={opacity}
-                    />
-                    {node.id !== 'inbox' && (
-                      <>
-                        <Circle
-                          cx={x}
-                          cy={y}
-                          r={arcRadius}
-                          color="rgba(148, 163, 184, 0.2)"
-                          style="stroke"
-                          strokeWidth={2.5}
-                          opacity={opacity * (isSelected ? 0.45 : 1)}
-                        />
-                        {progress >= 1 ? (
-                          <Circle
-                            cx={x}
-                            cy={y}
-                            r={arcRadius}
-                            color="#4ADE80"
-                            style="stroke"
-                            strokeWidth={2.5}
-                            strokeCap="round"
-                            opacity={opacity * (isSelected ? 0.5 : 1)}
-                          />
-                        ) : (
-                          progressPath && (
-                            <Path
-                              path={progressPath}
-                              color="#38BDF8"
-                              style="stroke"
-                              strokeWidth={2.5}
-                              strokeCap="round"
-                              opacity={opacity * (isSelected ? 0.5 : 1)}
-                            />
-                          )
-                        )}
-                      </>
-                    )}
-                    {(isSelected || (isSearching && r > 0)) && (
-                      <Circle
-                        cx={x}
-                        cy={y}
-                        r={nodeRadius + 2}
-                        color={isSelected ? '#38BDF8' : '#FDE047'}
-                        style="stroke"
-                        strokeWidth={isSelected ? 3 : 2}
-                      />
-                    )}
-                    {font && (
-                      <SkiaText
-                        x={x - textWidth / 2}
-                        y={y + 4}
-                        text={node.label}
-                        font={font}
-                        color={isSelected ? '#0F172A' : '#FFFFFF'}
-                        opacity={opacity}
-                      />
-                    )}
-                    {countFont && (
-                      <SkiaText
-                        x={x - itemCountWidth / 2}
-                        y={y + 18}
-                        text={itemCountText}
-                        font={countFont}
-                        color={isSelected ? '#334155' : '#CBD5E1'}
-                        opacity={opacity}
-                      />
-                    )}
-                    {node.id === 'inbox' &&
-                      (metrics?.inboxCount ?? 0) > 0 && (
-                        <>
-                          {inboxBadgeText.length > 1 ? (
-                            <>
-                              <RoundedRect
-                                x={inboxBadgeX - inboxBadgeWidth / 2}
-                                y={inboxBadgeY - 10}
-                                width={inboxBadgeWidth}
-                                height={20}
-                                r={10}
-                                color="#EF4444"
-                                opacity={opacity}
-                              />
-                              <RoundedRect
-                                x={inboxBadgeX - inboxBadgeWidth / 2}
-                                y={inboxBadgeY - 10}
-                                width={inboxBadgeWidth}
-                                height={20}
-                                r={10}
-                                color="#0F172A"
-                                style="stroke"
-                                strokeWidth={1.5}
-                                opacity={opacity}
-                              />
-                            </>
-                          ) : (
-                            <>
-                              <Circle
-                                cx={inboxBadgeX}
-                                cy={inboxBadgeY}
-                                r={10}
-                                color="#EF4444"
-                                opacity={opacity}
-                              />
-                              <Circle
-                                cx={inboxBadgeX}
-                                cy={inboxBadgeY}
-                                r={10}
-                                color="#0F172A"
-                                style="stroke"
-                                strokeWidth={1.5}
-                                opacity={opacity}
-                              />
-                            </>
-                          )}
-                          {countFont && (
-                            <SkiaText
-                              x={inboxBadgeX - inboxBadgeTextWidth / 2}
-                              y={inboxBadgeY + 3.5}
-                              text={inboxBadgeText}
-                              font={countFont}
-                              color="#FFFFFF"
-                              opacity={opacity}
-                            />
-                          )}
-                        </>
-                      )}
-                  </React.Fragment>
-                );
-              })}
-            </Canvas>
-          </GestureDetector>
-        </View>
-
-        {/* Прозрачный контейнер поиска и кнопки добавления */}
+      {/* Прозрачный контейнер поиска и кнопки добавления */}
+      <KeyboardAwareBottom>
         <Animated.View
           pointerEvents={selectedId === null ? 'auto' : 'none'}
           style={[styles.searchBar, searchBarAnimatedStyle]}
@@ -957,7 +1181,7 @@ export default function GraphPrototypeScreen() {
               <Text style={styles.addButtonText}>+</Text>
             </Pressable>
         </Animated.View>
-      </KeyboardAvoidingView>
+      </KeyboardAwareBottom>
 
       {sheetTopic && (
         <TopicBottomSheet
@@ -984,6 +1208,7 @@ export default function GraphPrototypeScreen() {
           <Text style={styles.toastText}>{toastMessage}</Text>
         </View>
       )}
+
     </SafeAreaView>
   );
 }
@@ -1014,6 +1239,23 @@ const styles = StyleSheet.create({
     color: '#E2E8F0',
     fontWeight: '600',
     fontSize: 13,
+  },
+  devButton: {
+    minWidth: 48,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(148, 163, 184, 0.45)',
+    backgroundColor: 'rgba(30, 41, 59, 0.88)',
+  },
+  devButtonText: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
   hintText: {
     flex: 1,

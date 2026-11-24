@@ -6,14 +6,18 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { FlashList } from '@shopify/flash-list';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import {
+  FlatList as RNGHFlatList,
+  Gesture,
+  GestureDetector,
+} from 'react-native-gesture-handler';
 import Animated, {
   Easing,
   runOnJS,
   useAnimatedScrollHandler,
   useAnimatedStyle,
   useSharedValue,
+  withSpring,
   withTiming,
 } from 'react-native-reanimated';
 import type { Item } from '@/types';
@@ -28,7 +32,7 @@ interface TopicBottomSheetProps {
   onItemPress: (item: Item) => void;
 }
 
-const AnimatedFlashList = Animated.createAnimatedComponent(FlashList<Item>);
+const AnimatedRNGHFlatList = Animated.createAnimatedComponent(RNGHFlatList<Item>);
 
 export function TopicBottomSheet({
   topic,
@@ -41,13 +45,14 @@ export function TopicBottomSheet({
   const { height: screenHeight } = useWindowDimensions();
   const sheetHeight = Math.max(0, screenHeight * 0.66 - 36);
   const translateY = useSharedValue(sheetHeight);
-  const dragStartY = useSharedValue(0);
   const scrollOffset = useSharedValue(0);
-  const canDragFromList = useSharedValue(false);
+  const startScrollOffset = useSharedValue(0);
   const activeTopicId = topic?.id ?? '';
-  const lastTopicId = useSharedValue(activeTopicId);
 
   useEffect(() => {
+    scrollOffset.value = 0;
+    startScrollOffset.value = 0;
+
     if (isOpen) {
       translateY.value = withTiming(0, {
         duration: 220,
@@ -67,8 +72,17 @@ export function TopicBottomSheet({
         },
       );
     }
-  }, [isOpen, onDismiss, sheetHeight, translateY]);
+  }, [
+    activeTopicId,
+    isOpen,
+    onDismiss,
+    scrollOffset,
+    sheetHeight,
+    startScrollOffset,
+    translateY,
+  ]);
 
+  /* eslint-disable react-hooks/immutability, react-hooks/exhaustive-deps */
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
   }));
@@ -79,76 +93,79 @@ export function TopicBottomSheet({
     },
   });
 
-  /* eslint-disable react-hooks/immutability */
   const headerPanGesture = useMemo(
     () =>
       Gesture.Pan()
-        .onBegin(() => {
-          dragStartY.value = translateY.value;
-        })
+        .activeOffsetY(5)
         .onUpdate((event) => {
-          translateY.value = Math.max(0, dragStartY.value + event.translationY);
+          if (event.translationY > 0) {
+            translateY.value = event.translationY;
+          }
         })
         .onEnd((event) => {
-          if (event.translationY > 100 || event.velocityY > 500) {
-            runOnJS(onClose)();
+          if (event.translationY > 80 || event.velocityY > 500) {
+            translateY.value = withTiming(
+              sheetHeight,
+              { duration: 200 },
+              (finished) => {
+                if (finished) {
+                  runOnJS(onClose)();
+                }
+              },
+            );
           } else {
-            translateY.value = withTiming(0, {
-              duration: 180,
-              easing: Easing.out(Easing.cubic),
+            translateY.value = withSpring(0, {
+              damping: 22,
+              stiffness: 220,
             });
           }
         }),
-    [dragStartY, onClose, translateY],
+    [onClose, sheetHeight, translateY],
   );
 
   const listPanGesture = useMemo(
     () =>
-      Gesture.Simultaneous(
-        Gesture.Pan()
-          .onBegin(() => {
-            if (lastTopicId.value !== activeTopicId) {
-              scrollOffset.value = 0;
-              lastTopicId.value = activeTopicId;
-            }
-            dragStartY.value = translateY.value;
-            canDragFromList.value = scrollOffset.value <= 0;
-          })
-          .onUpdate((event) => {
-            if (canDragFromList.value && event.translationY > 0) {
-              translateY.value = Math.max(
-                0,
-                dragStartY.value + event.translationY,
-              );
-            }
-          })
-          .onEnd((event) => {
-            if (
-              canDragFromList.value &&
-              (event.translationY > 100 || event.velocityY > 500)
-            ) {
-              runOnJS(onClose)();
-            } else {
-              translateY.value = withTiming(0, {
-                duration: 180,
-                easing: Easing.out(Easing.cubic),
-              });
-            }
-            canDragFromList.value = false;
-          }),
-        Gesture.Native(),
-      ),
-    [
-      activeTopicId,
-      canDragFromList,
-      dragStartY,
-      lastTopicId,
-      onClose,
-      scrollOffset,
-      translateY,
-    ],
+      Gesture.Pan()
+        .activeOffsetY(10)
+        .failOffsetX([-20, 20])
+        .onBegin(() => {
+          startScrollOffset.value = scrollOffset.value;
+        })
+        .onUpdate((event) => {
+          if (startScrollOffset.value <= 2 && event.translationY > 0) {
+            translateY.value = event.translationY;
+          }
+        })
+        .onEnd((event) => {
+          if (startScrollOffset.value > 2 || event.translationY <= 0) {
+            return;
+          }
+
+          if (translateY.value > 80 || event.velocityY > 500) {
+            translateY.value = withTiming(
+              sheetHeight,
+              { duration: 200 },
+              (finished) => {
+                if (finished) {
+                  runOnJS(onClose)();
+                }
+              },
+            );
+          } else {
+            translateY.value = withSpring(0, {
+              damping: 22,
+              stiffness: 220,
+            });
+          }
+        }),
+    [onClose, sheetHeight, startScrollOffset, translateY],
   );
-  /* eslint-enable react-hooks/immutability */
+  const nativeScrollGesture = useMemo(() => Gesture.Native(), []);
+  const listGesture = useMemo(
+    () => Gesture.Simultaneous(listPanGesture, nativeScrollGesture),
+    [listPanGesture, nativeScrollGesture],
+  );
+  /* eslint-enable react-hooks/immutability, react-hooks/exhaustive-deps */
 
   const emptyList = useMemo(
     () => (
@@ -189,8 +206,8 @@ export function TopicBottomSheet({
         </View>
       </GestureDetector>
 
-      <GestureDetector gesture={listPanGesture}>
-        <AnimatedFlashList
+      <GestureDetector gesture={listGesture}>
+        <AnimatedRNGHFlatList
           key={topic.id}
           style={styles.listContainer}
           data={items}

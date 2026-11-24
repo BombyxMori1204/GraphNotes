@@ -239,7 +239,13 @@ export default function EmbeddingsPrototypeScreen() {
         <View style={styles.header}>
           <Pressable
             accessibilityRole="button"
-            onPress={() => router.back()}
+            onPress={() => {
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/');
+              }
+            }}
             style={styles.backButton}
           >
             <Text style={styles.backButtonText}>Назад</Text>
