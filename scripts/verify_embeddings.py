@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Compare the app's fixed multilingual-e5-small test phrases with Transformers."""
+"""Compare app multilingual-e5-small embeddings with Transformers."""
 
+import argparse
 import json
 
 import torch
@@ -19,13 +20,21 @@ PHRASES = [
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--phrase",
+        help="Compare one custom phrase instead of the fixed multilingual test set.",
+    )
+    args = parser.parse_args()
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModel.from_pretrained(MODEL_NAME)
     model.eval()
 
+    phrases = [args.phrase] if args.phrase is not None else PHRASES
     vectors: list[torch.Tensor] = []
     with torch.inference_mode():
-        for index, phrase in enumerate(PHRASES, start=1):
+        for index, phrase in enumerate(phrases, start=1):
             encoded = tokenizer(
                 phrase,
                 truncation=True,
@@ -39,6 +48,11 @@ def main() -> None:
             mask = encoded["attention_mask"].unsqueeze(-1).to(output.dtype)
             pooled = (output * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
             vectors.append(functional.normalize(pooled, p=2, dim=1)[0])
+
+    if args.phrase is not None:
+        print(f"L2 norm: {torch.linalg.vector_norm(vectors[0]).item():.6f}")
+        print(f"first 5 values: {json.dumps(vectors[0][:5].tolist())}")
+        return
 
     similarities = (
         (1, 2),
