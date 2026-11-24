@@ -1,8 +1,9 @@
 import * as SQLite from 'expo-sqlite';
 
 import { runMigrations } from './migrations';
+import { seedDatabase } from './seed';
 
-const DATABASE_NAME = 'localvault.db';
+const DATABASE_NAME = 'graphnotes.db';
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -23,12 +24,12 @@ async function initializeDatabase(): Promise<SQLite.SQLiteDatabase> {
   `);
 
   await runMigrations(database);
-  await database.runAsync(
-    'INSERT OR IGNORE INTO topics (id, name, parent_id, created_at) VALUES (?, ?, NULL, ?)',
-    'inbox',
-    'Входящие',
-    Date.now(),
+  const topicCount = await database.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) AS count FROM topics',
   );
+  if ((topicCount?.count ?? 0) === 0) {
+    await seedDatabase(database);
+  }
 
   return database;
 }

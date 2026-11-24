@@ -10,7 +10,6 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
 import {
   Canvas,
   Circle,
@@ -40,7 +39,18 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import type { Item } from '@/types';
-import { getItemsForTopic, MOCK_ITEMS } from '@/features/items/mockItems';
+import {
+  createItem,
+  getAllItems,
+  getInboxCount,
+  toggleItemRead,
+} from '@/db/repositories/itemsRepo';
+import {
+  getAllTopicsWithStats,
+  getTopicEdges,
+  type TopicEdge,
+  type TopicWithStats,
+} from '@/db/repositories/topicsRepo';
 import { QuickAddModal } from '@/features/items/QuickAddModal';
 import { TopicBottomSheet } from '@/features/items/TopicBottomSheet';
 import { getTopicNodeDiameter, mmToDp } from '@/features/graph/metrics';
@@ -60,6 +70,7 @@ interface TopicNode extends SimulationNodeDatum {
 interface TopicLink extends SimulationLinkDatum<TopicNode> {
   source: string | TopicNode;
   target: string | TopicNode;
+  weight: number;
 }
 
 interface TopicMetrics {
@@ -69,36 +80,32 @@ interface TopicMetrics {
   inboxCount: number;
 }
 
-const INITIAL_NODES: TopicNode[] = [
-  { id: 'inbox', label: 'Входящие', keywords: ['буфер', 'новое', 'неразобранное', 'inbox'], weight: 5, radius: 46, color: '#F97316' },
-  { id: 'diploma', label: 'Диплом', keywords: ['статья', 'исследование', 'график', 'вуз'], weight: 5, radius: 44, color: '#3B82F6' },
-  { id: 'rn', label: 'React Native', keywords: ['expo', 'typescript', 'android', 'мобилка'], weight: 4, radius: 40, color: '#06B6D4' },
-  { id: 'ux', label: 'UX и Фиттс', keywords: ['эргономика', 'палец', 'хик', 'интерфейс', '20:9'], weight: 4, radius: 40, color: '#8B5CF6' },
-  { id: 'skia', label: 'Skia', keywords: ['canvas', 'графика', 'рендер', 'граф'], weight: 4, radius: 38, color: '#EC4899' },
-  { id: 'ollama', label: 'Ollama', keywords: ['llm', 'агент', 'qwen', 'gemma', 'ии'], weight: 4, radius: 38, color: '#10B981' },
-  { id: 'python', label: 'Python', keywords: ['скрипт', 'onnx', 'эмбеддинги', 'ml'], weight: 3, radius: 34, color: '#EAB308' },
-  { id: 'sqlite', label: 'SQLite', keywords: ['бд', 'база', 'данные', 'таблицы'], weight: 3, radius: 34, color: '#6366F1' },
-  { id: 'articles', label: 'Статьи', keywords: ['чтение', 'pdf', 'наука', 'ссылки'], weight: 3, radius: 34, color: '#14B8A6' },
-  { id: 'ideas', label: 'Идеи', keywords: ['заметки', 'мысли', 'проекты'], weight: 2, radius: 30, color: '#F43F5E' },
-  { id: 'design', label: 'Дизайн', keywords: ['цвет', 'шрифт', 'макет', 'ui'], weight: 2, radius: 30, color: '#A855F7' },
-  { id: 'books', label: 'Книги', keywords: ['читать', 'литература', 'конспект'], weight: 1, radius: 28, color: '#64748B' },
-];
+const TOPIC_KEYWORDS: Record<string, string[]> = {
+  diploma: ['статья', 'исследование', 'график', 'вуз'],
+  rn: ['expo', 'typescript', 'android', 'мобилка'],
+  ux: ['эргономика', 'палец', 'хик', 'интерфейс', '20:9'],
+  skia: ['canvas', 'графика', 'рендер', 'граф'],
+  ollama: ['llm', 'агент', 'qwen', 'gemma', 'ии'],
+  python: ['скрипт', 'onnx', 'эмбеддинги', 'ml'],
+  sqlite: ['бд', 'база', 'данные', 'таблицы'],
+  articles: ['чтение', 'pdf', 'наука', 'ссылки'],
+  ideas: ['заметки', 'мысли', 'проекты'],
+  design: ['цвет', 'шрифт', 'макет', 'ui'],
+  books: ['читать', 'литература', 'конспект'],
+};
 
-const INITIAL_LINKS: TopicLink[] = [
-  { source: 'inbox', target: 'ideas' },
-  { source: 'inbox', target: 'articles' },
-  { source: 'diploma', target: 'ux' },
-  { source: 'diploma', target: 'rn' },
-  { source: 'diploma', target: 'articles' },
-  { source: 'rn', target: 'skia' },
-  { source: 'rn', target: 'sqlite' },
-  { source: 'ux', target: 'design' },
-  { source: 'ux', target: 'skia' },
-  { source: 'ollama', target: 'python' },
-  { source: 'ollama', target: 'rn' },
-  { source: 'python', target: 'sqlite' },
-  { source: 'articles', target: 'books' },
-  { source: 'ideas', target: 'design' },
+const FALLBACK_TOPIC_COLORS = [
+  '#3B82F6',
+  '#06B6D4',
+  '#8B5CF6',
+  '#EC4899',
+  '#10B981',
+  '#EAB308',
+  '#6366F1',
+  '#14B8A6',
+  '#F43F5E',
+  '#A855F7',
+  '#64748B',
 ];
 
 function computeRelevance(node: TopicNode, query: string): number {
@@ -119,6 +126,15 @@ function computeRelevance(node: TopicNode, query: string): number {
   return 0;
 }
 
+function loadGraphData() {
+  return Promise.all([
+    getAllTopicsWithStats(),
+    getTopicEdges(),
+    getInboxCount(),
+    getAllItems(),
+  ]);
+}
+
 export default function GraphPrototypeScreen() {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
@@ -130,41 +146,99 @@ export default function GraphPrototypeScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [sheetTopicId, setSheetTopicId] = useState<string | null>(null);
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
-  const [items, setItems] = useState<Item[]>(MOCK_ITEMS);
+  const [items, setItems] = useState<Item[]>([]);
+  const [topics, setTopics] = useState<TopicWithStats[]>([]);
+  const [topicEdges, setTopicEdges] = useState<TopicEdge[]>([]);
+  const [inboxCount, setInboxCount] = useState(0);
   const [nodes, setNodes] = useState<TopicNode[]>([]);
   const [links, setLinks] = useState<TopicLink[]>([]);
   const [toastMessage, setToastMessage] = useState('');
 
+  const refreshGraphData = useCallback(async () => {
+    const [loadedTopics, loadedEdges, loadedInboxCount, loadedItems] =
+      await loadGraphData();
+    setTopics(loadedTopics);
+    setTopicEdges(loadedEdges);
+    setInboxCount(loadedInboxCount);
+    setItems(loadedItems);
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    void loadGraphData()
+      .then(([loadedTopics, loadedEdges, loadedInboxCount, loadedItems]) => {
+        if (!isMounted) return;
+        setTopics(loadedTopics);
+        setTopicEdges(loadedEdges);
+        setInboxCount(loadedInboxCount);
+        setItems(loadedItems);
+      })
+      .catch((error: unknown) => {
+        if (!isMounted) return;
+        setToastMessage(
+          `Не удалось загрузить данные: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const graphTopicNodes = useMemo<TopicNode[]>(
+    () => [
+      {
+        id: 'inbox',
+        label: 'Входящие',
+        keywords: ['буфер', 'новое', 'неразобранное', 'inbox'],
+        weight: 5,
+        radius: getTopicNodeDiameter(inboxCount) / 2,
+        color: '#F97316',
+      },
+      ...topics.map((topic, index) => ({
+        id: topic.id,
+        label: topic.name,
+        keywords: TOPIC_KEYWORDS[topic.id] ?? [topic.name.toLowerCase()],
+        weight: Math.max(1, topic.totalCount),
+        radius: getTopicNodeDiameter(topic.totalCount) / 2,
+        color: topic.color ?? FALLBACK_TOPIC_COLORS[index % FALLBACK_TOPIC_COLORS.length],
+      })),
+    ],
+    [inboxCount, topics],
+  );
+  const graphTopicLinks = useMemo<TopicLink[]>(
+    () =>
+      topicEdges.map(({ source, target, weight }) => ({
+        source,
+        target,
+        weight,
+      })),
+    [topicEdges],
+  );
+
   const topicMetrics = useMemo(() => {
     const metrics = new Map<string, TopicMetrics>(
-      INITIAL_NODES.map((node) => [
-        node.id,
-        { totalCount: 0, readCount: 0, progress: 0, inboxCount: 0 },
-      ]),
+      [
+        [
+          'inbox',
+          { totalCount: 0, readCount: 0, progress: 0, inboxCount },
+        ],
+        ...topics.map((topic) => [
+          topic.id,
+          {
+            totalCount: topic.totalCount,
+            readCount: topic.readCount,
+            progress:
+              topic.totalCount > 0 ? topic.readCount / topic.totalCount : 0,
+            inboxCount: 0,
+          },
+        ] as [string, TopicMetrics]),
+      ],
     );
-
-    for (const item of items) {
-      if (item.topicIds.length === 0) {
-        const inbox = metrics.get('inbox');
-        if (inbox) inbox.inboxCount += 1;
-        continue;
-      }
-
-      for (const topicId of item.topicIds) {
-        const topic = metrics.get(topicId);
-        if (!topic) continue;
-        topic.totalCount += 1;
-        if (item.isRead) topic.readCount += 1;
-      }
-    }
-
-    for (const metric of metrics.values()) {
-      metric.progress =
-        metric.totalCount > 0 ? metric.readCount / metric.totalCount : 0;
-    }
-
     return metrics;
-  }, [items]);
+  }, [inboxCount, topics]);
 
   const simRef = useRef<Simulation<TopicNode, TopicLink> | null>(null);
   const topicMetricsRef = useRef(topicMetrics);
@@ -224,17 +298,17 @@ export default function GraphPrototypeScreen() {
 
   const relevanceMap = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const n of INITIAL_NODES) {
+    for (const n of graphTopicNodes) {
       map[n.id] = computeRelevance(n, query);
     }
     return map;
-  }, [query]);
+  }, [graphTopicNodes, query]);
 
   const selectedNeighborIds = useMemo(() => {
     const neighbors = new Set<string>();
     if (selectedId === null) return neighbors;
 
-    for (const link of INITIAL_LINKS) {
+    for (const link of graphTopicLinks) {
       const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
       const targetId = typeof link.target === 'string' ? link.target : link.target.id;
       if (sourceId === selectedId) neighbors.add(targetId);
@@ -242,7 +316,7 @@ export default function GraphPrototypeScreen() {
     }
 
     return neighbors;
-  }, [selectedId]);
+  }, [graphTopicLinks, selectedId]);
 
   const selectedModeRef = useRef({ selectedId, neighborIds: selectedNeighborIds });
 
@@ -253,7 +327,11 @@ export default function GraphPrototypeScreen() {
   // Инициализация симуляции
   useEffect(() => {
     const { width, height } = canvasSize;
-    const simNodes: TopicNode[] = INITIAL_NODES.map((n, i) => {
+    const previousPositions = new Map(
+      nodesRef.current.map((node) => [node.id, { x: node.x, y: node.y }]),
+    );
+    const simNodes: TopicNode[] = graphTopicNodes.map((n, i) => {
+      const previousPosition = previousPositions.get(n.id);
       const metrics = topicMetricsRef.current.get(n.id);
       const itemCount =
         n.id === 'inbox'
@@ -262,11 +340,11 @@ export default function GraphPrototypeScreen() {
       return {
         ...n,
         radius: getTopicNodeDiameter(itemCount) / 2,
-        x: width / 2 + Math.cos(i) * 40,
-        y: height / 2 + Math.sin(i) * 40,
+        x: previousPosition?.x ?? width / 2 + Math.cos(i) * 40,
+        y: previousPosition?.y ?? height / 2 + Math.sin(i) * 40,
       };
     });
-    const simLinks: TopicLink[] = INITIAL_LINKS.map((l) => ({ ...l }));
+    const simLinks: TopicLink[] = graphTopicLinks.map((link) => ({ ...link }));
 
     nodesRef.current = simNodes;
 
@@ -276,7 +354,7 @@ export default function GraphPrototypeScreen() {
         forceLink<TopicNode, TopicLink>(simLinks)
           .id((d) => d.id)
           .distance(105)
-          .strength(0.35)
+          .strength((link) => Math.min(0.75, 0.2 + link.weight * 0.1))
       )
       .force('charge', forceManyBody().strength(-160))
       .force('center', forceCenter(width / 2, height / 2))
@@ -308,7 +386,7 @@ export default function GraphPrototypeScreen() {
     return () => {
       simulation.stop();
     };
-  }, [canvasSize]);
+  }, [canvasSize, graphTopicLinks, graphTopicNodes]);
 
   useEffect(() => {
     const simulation = simRef.current;
@@ -506,44 +584,82 @@ export default function GraphPrototypeScreen() {
   /* eslint-enable react-hooks/refs, react-hooks/immutability */
 
   const sheetTopic = sheetTopicId
-    ? INITIAL_NODES.find((node) => node.id === sheetTopicId) ?? null
+    ? graphTopicNodes.find((node) => node.id === sheetTopicId) ?? null
     : null;
   const selectedItems = sheetTopic
-    ? getItemsForTopic(items, sheetTopic.id)
+    ? items.filter((item) =>
+        sheetTopic.id === 'inbox'
+          ? item.topicIds.length === 0
+          : item.topicIds.includes(sheetTopic.id),
+      )
     : [];
   const closeTopic = useCallback(() => setSelectedId(null), []);
   const dismissTopic = useCallback(() => setSheetTopicId(null), []);
-  const handleItemPress = useCallback(
-    (item: Item) => {
+  const handleItemPress = useCallback(async (item: Item) => {
+    const isRead = !item.isRead;
+    setItems((current) =>
+      current.map((currentItem) =>
+        currentItem.id === item.id ? { ...currentItem, isRead } : currentItem,
+      ),
+    );
+    try {
+      await toggleItemRead(item.id, isRead);
+    } catch (error) {
       setItems((current) =>
         current.map((currentItem) =>
           currentItem.id === item.id
-            ? { ...currentItem, isRead: !currentItem.isRead }
+            ? { ...currentItem, isRead: item.isRead }
             : currentItem,
         ),
       );
-    },
-    [],
-  );
+      setToastMessage(
+        `Не удалось обновить отметку: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
+
+    try {
+      await refreshGraphData();
+    } catch (error) {
+      setToastMessage(
+        `Отметка сохранена, но граф не обновился: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }, [refreshGraphData]);
 
   const openAddModal = useCallback(() => setIsAddModalVisible(true), []);
   const closeAddModal = useCallback(() => setIsAddModalVisible(false), []);
-  const handleQuickAddSave = useCallback((item: Item) => {
+  const handleQuickAddSave = useCallback(async (item: Item) => {
+    await createItem(item);
     setItems((current) => [item, ...current]);
+    try {
+      await refreshGraphData();
+    } catch (error) {
+      setToastMessage(
+        `Материал сохранён, но граф не обновился: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return;
+    }
     if (item.topicIds.length === 0) {
       setToastMessage('Сохранено во «Входящие»');
       return;
     }
 
     const topicLabels = item.topicIds
-      .map((topicId) => INITIAL_NODES.find((node) => node.id === topicId)?.label)
+      .map((topicId) => graphTopicNodes.find((node) => node.id === topicId)?.label)
       .filter((label): label is string => label !== undefined);
     setToastMessage(
       topicLabels.length === 1
         ? `Добавлено в тему «${topicLabels[0]}»`
         : `Добавлено в ${topicLabels.length} темы`,
     );
-  }, []);
+  }, [graphTopicNodes, refreshGraphData]);
 
   const isSearching = query.trim().length > 0;
 
@@ -554,12 +670,7 @@ export default function GraphPrototypeScreen() {
         behavior="padding"
         keyboardVerticalOffset={110}
       >
-        {/* Верхняя панель */}
         <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backText}>← Назад</Text>
-          </Pressable>
-
           <Text style={styles.hintText}>Коснитесь узла или начните поиск</Text>
         </View>
 
@@ -861,9 +972,9 @@ export default function GraphPrototypeScreen() {
 
       <QuickAddModal
         visible={isAddModalVisible}
-        topics={INITIAL_NODES.filter((node) => node.id !== 'inbox').map(
-          (node) => ({ id: node.id, label: node.label }),
-        )}
+        topics={graphTopicNodes
+          .filter((node) => node.id !== 'inbox')
+          .map((node) => ({ id: node.id, label: node.label }))}
         onClose={closeAddModal}
         onSave={handleQuickAddSave}
       />

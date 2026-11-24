@@ -30,7 +30,7 @@ interface QuickAddModalProps {
   visible: boolean;
   topics: QuickAddTopic[];
   onClose: () => void;
-  onSave: (item: Item) => void;
+  onSave: (item: Item) => Promise<void> | void;
 }
 
 type QuickAddType = 'link' | 'text';
@@ -44,6 +44,10 @@ function getDomain(url: string): string {
   } catch {
     return url;
   }
+}
+
+function normalizeUrl(url: string): string {
+  return /^[a-z][a-z\d+.-]*:\/\//i.test(url) ? url : `https://${url}`;
 }
 
 export function QuickAddModal({
@@ -60,6 +64,7 @@ export function QuickAddModal({
   const [saveOfflineCopy, setSaveOfflineCopy] = useState(true);
   const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
   const [validationMessage, setValidationMessage] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
   const urlInputRef = useRef<ComponentRef<typeof TextInput>>(null);
   const backdropOpacity = useSharedValue(0);
   const sheetOffset = useSharedValue(36);
@@ -101,7 +106,7 @@ export function QuickAddModal({
     onClose();
   };
 
-  const save = () => {
+  const save = async () => {
     const normalizedUrl = url.trim();
     const normalizedDescription = description.trim();
     const itemText = type === 'text' ? normalizedDescription : normalizedUrl;
@@ -124,6 +129,7 @@ export function QuickAddModal({
       type,
       description: normalizedDescription,
       sourceLabel,
+      url: type === 'link' ? normalizeUrl(normalizedUrl) : null,
       copyStatus:
         type === 'link' && saveOfflineCopy ? 'full' : 'none',
       topicIds: selectedTopicIds,
@@ -131,8 +137,17 @@ export function QuickAddModal({
       createdAt: new Date().toISOString(),
     };
 
-    onSave(item);
-    close();
+    setIsSaving(true);
+    try {
+      await onSave(item);
+      close();
+    } catch (error) {
+      setValidationMessage(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const toggleTopic = (topicId: string) => {
@@ -322,10 +337,13 @@ export function QuickAddModal({
             <View style={styles.footer}>
               <Pressable
                 accessibilityRole="button"
-                onPress={save}
-                style={styles.saveButton}
+                disabled={isSaving}
+                onPress={() => void save()}
+                style={[styles.saveButton, isSaving && styles.saveButtonDisabled]}
               >
-                <Text style={styles.saveButtonText}>Сохранить</Text>
+                <Text style={styles.saveButtonText}>
+                  {isSaving ? 'Сохранение…' : 'Сохранить'}
+                </Text>
               </Pressable>
             </View>
           </Animated.View>
@@ -491,6 +509,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 14,
     backgroundColor: '#F97316',
+  },
+  saveButtonDisabled: {
+    opacity: 0.65,
   },
   saveButtonText: {
     color: '#FFFFFF',

@@ -6,7 +6,8 @@ export interface Topic {
   id: string;
   name: string;
   parentId: string | null;
-  createdAt: number;
+  color: string | null;
+  createdAt: string;
 }
 
 export interface Item {
@@ -16,6 +17,11 @@ export interface Item {
   description: string;
   sourceLabel: string;
   copyStatus: OfflineCopyStatus;
+  url?: string | null;
+  filePath?: string | null;
+  copyPath?: string | null;
+  cleanText?: string;
+  updatedAt?: string;
   topicIds: string[];
   isRead: boolean;
   createdAt: string;
